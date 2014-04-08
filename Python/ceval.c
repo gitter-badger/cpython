@@ -124,6 +124,12 @@ static PyObject * load_args(PyObject ***, int);
 #define CALL_FLAG_VAR 1
 #define CALL_FLAG_KW 2
 
+#ifdef WITH_DTRACE
+static void maybe_dtrace_line(PyFrameObject *frame,
+                              int *instr_lb, int *instr_ub,
+                              int *instr_prev);
+#endif
+
 #ifdef LLTRACE
 static int lltrace;
 static int prtrace(PyObject *, char *);
@@ -680,50 +686,45 @@ PyEval_EvalCode(PyCodeObject *co, PyObject *globals, PyObject *locals)
 static void
 dtrace_entry(PyFrameObject *f)
 {
-	const char *filename;
-	const char *fname;
-	int lineno;
-	
-	filename = PyString_AsString(f->f_code->co_filename);
-	fname = PyString_AsString(f->f_code->co_name);
-	lineno = PyCode_Addr2Line(f->f_code, f->f_lasti);
+    const char *filename;
+    const char *fname;
+    int lineno;
 
-	PYTHON_FUNCTION_ENTRY((char *)filename, (char *)fname, lineno);
+    filename = PyString_AsString(f->f_code->co_filename);
+    fname = PyString_AsString(f->f_code->co_name);
+    lineno = PyCode_Addr2Line(f->f_code, f->f_lasti);
 
-	/*
-	 * Currently a USDT tail-call will not receive the correct arguments.
-	 * Disable the tail call here.
-	 */
+    PYTHON_FUNCTION_ENTRY((char *)filename, (char *)fname, lineno);
+
+    /*
+     * Currently a USDT tail-call will not receive the correct arguments.
+     * Disable the tail call here.
+     */
 #if defined(__sparc)
-	asm("nop");
+    asm("nop");
 #endif
 }
 
 static void
 dtrace_return(PyFrameObject *f)
 {
-	const char *filename;
-	const char *fname;
-	int lineno;
-	
-	filename = PyString_AsString(f->f_code->co_filename);
-	fname = PyString_AsString(f->f_code->co_name);
-	lineno = PyCode_Addr2Line(f->f_code, f->f_lasti);
-	PYTHON_FUNCTION_RETURN((char *)filename, (char *)fname, lineno);
+    const char *filename;
+    const char *fname;
+    int lineno;
 
-	/*
-	 * Currently a USDT tail-call will not receive the correct arguments.
-	 * Disable the tail call here.
-	 */
+    filename = PyString_AsString(f->f_code->co_filename);
+    fname = PyString_AsString(f->f_code->co_name);
+    lineno = PyCode_Addr2Line(f->f_code, f->f_lasti);
+    PYTHON_FUNCTION_RETURN((char *)filename, (char *)fname, lineno);
+
+    /*
+     * Currently a USDT tail-call will not receive the correct arguments.
+     * Disable the tail call here.
+     */
 #if defined(__sparc)
-	asm("nop");
+    asm("nop");
 #endif
 }
-#else
-#define	PYTHON_FUNCTION_ENTRY_ENABLED() 0
-#define	PYTHON_FUNCTION_RETURN_ENABLED() 0
-#define	dtrace_entry(f)
-#define	dtrace_return(f)
 #endif
 
 /* Interpreter main loop */
@@ -736,8 +737,16 @@ PyEval_EvalFrame(PyFrameObject *f) {
     return PyEval_EvalFrameEx(f, 0);
 }
 
+
 PyObject *
+#if defined(WITH_DTRACE) && defined(__amd64)
+PyEval_EvalFrameExReal(long a1, long a2, long a3, long a4, long a5, long a6,
+    PyFrameObject *f, int throwflag)
+#elif defined(WITH_DTRACE) && defined(__sparc)
+PyEval_EvalFrameExReal(PyFrameObject *f, int throwflag)
+#else
 PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
+#endif
 {
 #ifdef DXPAIRS
     int lastopcode = 0;
@@ -963,9 +972,10 @@ PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
         }
     }
 
-    if (PYTHON_FUNCTION_ENTRY_ENABLED()) {
-      dtrace_entry(f);
-    }
+#ifdef WITH_DTRACE
+    if (PYTHON_FUNCTION_ENTRY_ENABLED())
+        dtrace_entry(f);
+#endif
 
     co = f->f_code;
     names = co->co_names;
@@ -1152,6 +1162,12 @@ PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
 
         /* Main switch on opcode */
         READ_TIMESTAMP(inst0);
+
+#ifdef WITH_DTRACE
+        if (PYTHON_LINE_ENABLED()) {
+            maybe_dtrace_line(f, &instr_lb, &instr_ub, &instr_prev);
+        }
+#endif
 
         switch (opcode) {
 
@@ -3058,10 +3074,10 @@ fast_yield:
 
     /* pop frame */
 exit_eval_frame:
-    if (PYTHON_FUNCTION_RETURN_ENABLED()) {
-      dtrace_return(f);
-    }
-
+#ifdef WITH_DTRACE
+    if (PYTHON_FUNCTION_RETURN_ENABLED())
+        dtrace_return(f);
+#endif
     Py_LeaveRecursiveCall();
     tstate->frame = f->f_back;
 
@@ -3301,7 +3317,8 @@ PyEval_EvalCodeEx(PyCodeObject *co, PyObject *globals, PyObject *locals,
     if (co->co_flags & CO_GENERATOR) {
         /* Don't need to keep the reference to f_back, it will be set
          * when the generator is resumed. */
-        Py_CLEAR(f->f_back);
+        Py_XDECREF(f->f_back);
+        f->f_back = NULL;
 
         PCALL(PCALL_GENERATOR);
 
@@ -3756,6 +3773,57 @@ call_trace(Py_tracefunc func, PyObject *obj, PyFrameObject *frame,
     return result;
 }
 
+/*
+ * These shenanigans look like utter madness, but what we're actually doing is
+ * making sure that the ustack helper will see the PyFrameObject pointer on the
+ * stack. We have two tricky cases:
+ *
+ * amd64
+ *
+ * We use up the six registers for passing arguments, meaning the call can't
+ * use a register for passing 'f', and has to push it onto the stack in a known
+ * location.
+ *
+ * And how does "throwflag" figure in to this? -PN
+ *
+ * SPARC
+ *
+ * Here the problem is that (on 32-bit) the compiler is re-using %i0 before
+ * some calls inside PyEval_EvalFrameReal(), which means that when it's saved,
+ * it's just some junk value rather than the real first argument. So, instead,
+ * we trace our proxy PyEval_EvalFrame(), where we 'know' the compiler won't
+ * decide to re-use %i0. We also need to defeat optimization of our proxy.
+ */
+
+#if defined(WITH_DTRACE)
+
+#if defined(__amd64)
+
+PyObject *
+PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
+{
+    volatile PyObject *f2;
+    f2 = PyEval_EvalFrameExReal(0, 0, 0, 0, 0, 0, f, throwflag);
+    return (PyObject *)f2;
+}
+
+#elif defined(__sparc)
+
+volatile int dummy;
+
+PyObject *
+PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
+{
+    volatile PyObject *f2;
+    f2 = PyEval_EvalFrameExReal(f, throwflag);
+    dummy = f->ob_refcnt;
+    return (PyObject *)f2;
+}
+
+#endif
+#endif
+
+
 PyObject *
 _PyEval_CallTracing(PyObject *func, PyObject *args)
 {
@@ -3773,6 +3841,51 @@ _PyEval_CallTracing(PyObject *func, PyObject *args)
     tstate->use_tracing = save_use_tracing;
     return result;
 }
+
+#ifdef WITH_DTRACE
+/* See Objects/lnotab_notes.txt for a description of how tracing works. */
+/* Practically a ripoff of "maybe_call_line_trace" function. */
+static void
+maybe_dtrace_line(PyFrameObject *frame, int *instr_lb, int *instr_ub,
+                  int *instr_prev)
+{
+    int line = frame->f_lineno;
+    char *co_filename, *co_name;
+
+    /* If the last instruction executed isn't in the current
+       instruction window, reset the window.
+    */
+    if (frame->f_lasti < *instr_lb || frame->f_lasti >= *instr_ub) {
+        PyAddrPair bounds;
+        line = _PyCode_CheckLineNumber(frame->f_code, frame->f_lasti,
+                                       &bounds);
+        *instr_lb = bounds.ap_lower;
+        *instr_ub = bounds.ap_upper;
+    }
+    /* If the last instruction falls at the start of a line or if
+       it represents a jump backwards, update the frame's line
+       number and call the trace function. */
+    if (frame->f_lasti == *instr_lb || frame->f_lasti < *instr_prev) {
+        frame->f_lineno = line;
+        co_filename = PyString_AsString(frame->f_code->co_filename);
+        if (!co_filename)
+            co_filename = "?";
+        co_name = PyString_AsString(frame->f_code->co_name);
+        if (!co_name)
+            co_name = "?";
+        PYTHON_LINE(co_filename, co_name, line);
+    }
+    *instr_prev = frame->f_lasti;
+
+    /*
+     * Currently a USDT tail-call will not receive the correct arguments.
+     * Disable the tail call here.
+     */
+#if defined(__sparc)
+    asm("nop");
+#endif
+}
+#endif
 
 /* See Objects/lnotab_notes.txt for a description of how tracing works. */
 static int
