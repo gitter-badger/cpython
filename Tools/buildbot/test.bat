@@ -1,3 +1,7 @@
 @rem Used by the buildbot "test" step.
-cd PCbuild
-call rt.bat -d -q -uall -rwW -n --timeout=3600 %1 %2 %3 %4 %5 %6 %7 %8 %9
+
+setlocal
+rem The following line should be removed before #20035 is closed
+set TCL_LIBRARY=%~dp0..\..\externals\tcltk\lib\tcl8.6
+
+call "%~dp0..\..\PCbuild\rt.bat" -d -q -uall -rwW -n --timeout=3600 %*

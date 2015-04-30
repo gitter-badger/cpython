@@ -9,7 +9,6 @@
 #include <windows.h>
 #ifdef HAVE_FCNTL_H
 #include <fcntl.h>
-#define PATH_MAX MAXPATHLEN
 #endif
 #endif
 
@@ -343,6 +342,8 @@ Py_Main(int argc, wchar_t **argv)
     int version = 0;
     int saw_unbuffered_flag = 0;
     PyCompilerFlags cf;
+    PyObject *warning_option = NULL;
+    PyObject *warning_options = NULL;
 
     cf.cf_flags = 0;
 
@@ -465,7 +466,15 @@ Py_Main(int argc, wchar_t **argv)
             break;
 
         case 'W':
-            PySys_AddWarnOption(_PyOS_optarg);
+            if (warning_options == NULL)
+                warning_options = PyList_New(0);
+            if (warning_options == NULL)
+                Py_FatalError("failure in handling of -W argument");
+            warning_option = PyUnicode_FromWideChar(_PyOS_optarg, -1);
+            if (warning_option == NULL)
+                Py_FatalError("failure in handling of -W argument");
+            PyList_Append(warning_options, warning_option);
+            Py_DECREF(warning_option);
             break;
 
         case 'X':
@@ -511,16 +520,16 @@ Py_Main(int argc, wchar_t **argv)
 #ifdef MS_WINDOWS
     if (!Py_IgnoreEnvironmentFlag && (wp = _wgetenv(L"PYTHONWARNINGS")) &&
         *wp != L'\0') {
-        wchar_t *buf, *warning;
+        wchar_t *buf, *warning, *context = NULL;
 
         buf = (wchar_t *)PyMem_RawMalloc((wcslen(wp) + 1) * sizeof(wchar_t));
         if (buf == NULL)
             Py_FatalError(
                "not enough memory to copy PYTHONWARNINGS");
         wcscpy(buf, wp);
-        for (warning = wcstok(buf, L",");
+        for (warning = wcstok_s(buf, L",", &context);
              warning != NULL;
-             warning = wcstok(NULL, L",")) {
+             warning = wcstok_s(NULL, L",", &context)) {
             PySys_AddWarnOption(warning);
         }
         PyMem_RawFree(buf);
@@ -559,6 +568,12 @@ Py_Main(int argc, wchar_t **argv)
         PyMem_RawFree(buf);
     }
 #endif
+    if (warning_options != NULL) {
+        Py_ssize_t i;
+        for (i = 0; i < PyList_GET_SIZE(warning_options); i++) {
+            PySys_AddWarnOptionUnicode(PyList_GET_ITEM(warning_options, i));
+        }
+    }
 
     if (command == NULL && module == NULL && _PyOS_optind < argc &&
         wcscmp(argv[_PyOS_optind], L"-") != 0)
@@ -631,7 +646,7 @@ Py_Main(int argc, wchar_t **argv)
             /* Used by Mac/Tools/pythonw.c to forward
              * the argv0 of the stub executable
              */
-            wchar_t* wbuf = _Py_char2wchar(pyvenv_launcher, NULL);
+            wchar_t* wbuf = Py_DecodeLocale(pyvenv_launcher, NULL);
 
             if (wbuf == NULL) {
                 Py_FatalError("Cannot decode __PYVENV_LAUNCHER__");
@@ -652,6 +667,7 @@ Py_Main(int argc, wchar_t **argv)
     Py_SetProgramName(argv[0]);
 #endif
     Py_Initialize();
+    Py_XDECREF(warning_options);
 
     if (!Py_QuietFlag && (Py_VerboseFlag ||
                         (command == NULL && filename == NULL &&
@@ -713,7 +729,7 @@ Py_Main(int argc, wchar_t **argv)
                 char *cfilename_buffer;
                 const char *cfilename;
                 int err = errno;
-                cfilename_buffer = _Py_wchar2char(filename, NULL);
+                cfilename_buffer = Py_EncodeLocale(filename, NULL);
                 if (cfilename_buffer != NULL)
                     cfilename = cfilename_buffer;
                 else
@@ -736,11 +752,12 @@ Py_Main(int argc, wchar_t **argv)
                 }
             }
             {
-                /* XXX: does this work on Win/Win64? (see posix_fstat) */
-                struct stat sb;
-                if (fstat(fileno(fp), &sb) == 0 &&
+                struct _Py_stat_struct sb;
+                if (_Py_fstat_noraise(fileno(fp), &sb) == 0 &&
                     S_ISDIR(sb.st_mode)) {
-                    fprintf(stderr, "%ls: '%ls' is a directory, cannot continue\n", argv[0], filename);
+                    fprintf(stderr,
+                            "%ls: '%ls' is a directory, cannot continue\n",
+                            argv[0], filename);
                     fclose(fp);
                     return 1;
                 }

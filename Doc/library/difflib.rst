@@ -104,7 +104,8 @@ diffs. For comparing directories and files, see also, the :mod:`filecmp` module.
 
    The following methods are public:
 
-   .. method:: make_file(fromlines, tolines, fromdesc='', todesc='', context=False, numlines=5)
+   .. method:: make_file(fromlines, tolines, fromdesc='', todesc='', context=False, \
+                         numlines=5, *, charset='utf-8')
 
       Compares *fromlines* and *tolines* (lists of strings) and returns a string which
       is a complete HTML file containing a table showing line by line differences with
@@ -122,6 +123,10 @@ diffs. For comparing directories and files, see also, the :mod:`filecmp` module.
       "next" hyperlinks (setting to zero would cause the "next" hyperlinks to place
       the next difference highlight at the top of the browser without any leading
       context).
+
+      .. versionchanged:: 3.5
+         *charset* keyword-only argument was added.  The default charset of
+         HTML document changed from ``'ISO-8859-1'`` to ``'utf-8'``.
 
    .. method:: make_table(fromlines, tolines, fromdesc='', todesc='', context=False, numlines=5)
 
@@ -230,8 +235,8 @@ diffs. For comparing directories and files, see also, the :mod:`filecmp` module.
 
    :file:`Tools/scripts/ndiff.py` is a command-line front-end to this function.
 
-      >>> diff = ndiff('one\ntwo\nthree\n'.splitlines(1),
-      ...              'ore\ntree\nemu\n'.splitlines(1))
+      >>> diff = ndiff('one\ntwo\nthree\n'.splitlines(keepends=True),
+      ...              'ore\ntree\nemu\n'.splitlines(keepends=True))
       >>> print(''.join(diff), end="")
       - one
       ?  ^
@@ -254,8 +259,8 @@ diffs. For comparing directories and files, see also, the :mod:`filecmp` module.
 
    Example:
 
-      >>> diff = ndiff('one\ntwo\nthree\n'.splitlines(1),
-      ...              'ore\ntree\nemu\n'.splitlines(1))
+      >>> diff = ndiff('one\ntwo\nthree\n'.splitlines(keepends=True),
+      ...              'ore\ntree\nemu\n'.splitlines(keepends=True))
       >>> diff = list(diff) # materialize the generated delta into a list
       >>> print(''.join(restore(diff, 1)), end="")
       one
@@ -310,6 +315,21 @@ diffs. For comparing directories and files, see also, the :mod:`filecmp` module.
 
    See :ref:`difflib-interface` for a more detailed example.
 
+.. function:: diff_bytes(dfunc, a, b, fromfile=b'', tofile=b'', fromfiledate=b'', tofiledate=b'', n=3, lineterm=b'\\n')
+
+   Compare *a* and *b* (lists of bytes objects) using *dfunc*; yield a
+   sequence of delta lines (also bytes) in the format returned by *dfunc*.
+   *dfunc* must be a callable, typically either :func:`unified_diff` or
+   :func:`context_diff`.
+
+   Allows you to compare data with unknown or inconsistent encoding. All
+   inputs except *n* must be bytes objects, not str. Works by losslessly
+   converting all inputs (except *n*) to str, and calling ``dfunc(a, b,
+   fromfile, tofile, fromfiledate, tofiledate, n, lineterm)``. The output of
+   *dfunc* is then converted back to bytes, so the delta lines that you
+   receive have the same unknown/inconsistent encodings as *a* and *b*.
+
+   .. versionadded:: 3.5
 
 .. function:: IS_LINE_JUNK(line)
 
@@ -327,9 +347,9 @@ diffs. For comparing directories and files, see also, the :mod:`filecmp` module.
 
 .. seealso::
 
-   `Pattern Matching: The Gestalt Approach <http://www.ddj.com/184407970?pgno=5>`_
+   `Pattern Matching: The Gestalt Approach <http://www.drdobbs.com/database/pattern-matching-the-gestalt-approach/184407970>`_
       Discussion of a similar algorithm by John W. Ratcliff and D. E. Metzener. This
-      was published in `Dr. Dobb's Journal <http://www.ddj.com/>`_ in July, 1988.
+      was published in `Dr. Dobb's Journal <http://www.drdobbs.com/>`_ in July, 1988.
 
 
 .. _sequence-matcher:
@@ -660,7 +680,7 @@ obtained from the :meth:`~io.BaseIO.readlines` method of file-like objects):
    ...   2. Explicit is better than implicit.
    ...   3. Simple is better than complex.
    ...   4. Complex is better than complicated.
-   ... '''.splitlines(1)
+   ... '''.splitlines(keepends=True)
    >>> len(text1)
    4
    >>> text1[0][-1]
@@ -669,7 +689,7 @@ obtained from the :meth:`~io.BaseIO.readlines` method of file-like objects):
    ...   3.   Simple is better than complex.
    ...   4. Complicated is better than complex.
    ...   5. Flat is better than nested.
-   ... '''.splitlines(1)
+   ... '''.splitlines(keepends=True)
 
 Next we instantiate a Differ object:
 

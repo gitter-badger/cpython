@@ -8,6 +8,8 @@ the PythonShell window, and a Format menu which is only present in the Editor
 windows.
 
 """
+from importlib.util import find_spec
+
 from idlelib.configHandler import idleConf
 
 #   Warning: menudefs is altered in macosxSupport.overrideRootMenu()
@@ -75,7 +77,8 @@ menudefs = [
    ('!_Auto-open Stack Viewer', '<<toggle-jit-stack-viewer>>'),
    ]),
  ('options', [
-   ('_Configure IDLE...', '<<open-config-dialog>>'),
+   ('Configure _IDLE', '<<open-config-dialog>>'),
+   ('Configure _Extensions', '<<open-config-extensions-dialog>>'),
    None,
    ]),
  ('help', [
@@ -85,5 +88,8 @@ menudefs = [
    ('Python _Docs', '<<python-docs>>'),
    ]),
 ]
+
+if find_spec('turtledemo'):
+    menudefs[-1][1].append(('Turtle Demo', '<<open-turtle-demo>>'))
 
 default_keydefs = idleConf.GetCurrentKeySet()

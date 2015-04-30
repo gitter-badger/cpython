@@ -57,22 +57,6 @@ class PosixPathTest(unittest.TestCase):
         self.assertEqual(posixpath.join(b"/foo/", b"bar/", b"baz/"),
                          b"/foo/bar/baz/")
 
-        def check_error_msg(list_of_args, msg):
-            """Check posixpath.join raises friendly TypeErrors."""
-            for args in (item for perm in list_of_args
-                              for item in itertools.permutations(perm)):
-                with self.assertRaises(TypeError) as cm:
-                    posixpath.join(*args)
-                self.assertEqual(msg, cm.exception.args[0])
-
-        check_error_msg([[b'bytes', 'str'], [bytearray(b'bytes'), 'str']],
-                        "Can't mix strings and bytes in path components.")
-        # regression, see #15377
-        with self.assertRaises(TypeError) as cm:
-            posixpath.join(None, 'str')
-        self.assertNotEqual("Can't mix strings and bytes in path components.",
-                            cm.exception.args[0])
-
     def test_split(self):
         self.assertEqual(posixpath.split("/foo/bar"), ("/foo", "bar"))
         self.assertEqual(posixpath.split("/"), ("/", ""))
@@ -537,6 +521,60 @@ class PosixPathTest(unittest.TestCase):
             self.assertRaises(TypeError, posixpath.relpath, "str", b"bytes")
         finally:
             os.getcwdb = real_getcwdb
+
+    def test_commonpath(self):
+        def check(paths, expected):
+            self.assertEqual(posixpath.commonpath(paths), expected)
+            self.assertEqual(posixpath.commonpath([os.fsencode(p) for p in paths]),
+                             os.fsencode(expected))
+        def check_error(exc, paths):
+            self.assertRaises(exc, posixpath.commonpath, paths)
+            self.assertRaises(exc, posixpath.commonpath,
+                              [os.fsencode(p) for p in paths])
+
+        self.assertRaises(ValueError, posixpath.commonpath, [])
+        check_error(ValueError, ['/usr', 'usr'])
+        check_error(ValueError, ['usr', '/usr'])
+
+        check(['/usr/local'], '/usr/local')
+        check(['/usr/local', '/usr/local'], '/usr/local')
+        check(['/usr/local/', '/usr/local'], '/usr/local')
+        check(['/usr/local/', '/usr/local/'], '/usr/local')
+        check(['/usr//local', '//usr/local'], '/usr/local')
+        check(['/usr/./local', '/./usr/local'], '/usr/local')
+        check(['/', '/dev'], '/')
+        check(['/usr', '/dev'], '/')
+        check(['/usr/lib/', '/usr/lib/python3'], '/usr/lib')
+        check(['/usr/lib/', '/usr/lib64/'], '/usr')
+
+        check(['/usr/lib', '/usr/lib64'], '/usr')
+        check(['/usr/lib/', '/usr/lib64'], '/usr')
+
+        check(['spam'], 'spam')
+        check(['spam', 'spam'], 'spam')
+        check(['spam', 'alot'], '')
+        check(['and/jam', 'and/spam'], 'and')
+        check(['and//jam', 'and/spam//'], 'and')
+        check(['and/./jam', './and/spam'], 'and')
+        check(['and/jam', 'and/spam', 'alot'], '')
+        check(['and/jam', 'and/spam', 'and'], 'and')
+
+        check([''], '')
+        check(['', 'spam/alot'], '')
+        check_error(ValueError, ['', '/spam/alot'])
+
+        self.assertRaises(TypeError, posixpath.commonpath,
+                          [b'/usr/lib/', '/usr/lib/python3'])
+        self.assertRaises(TypeError, posixpath.commonpath,
+                          [b'/usr/lib/', 'usr/lib/python3'])
+        self.assertRaises(TypeError, posixpath.commonpath,
+                          [b'usr/lib/', '/usr/lib/python3'])
+        self.assertRaises(TypeError, posixpath.commonpath,
+                          ['/usr/lib/', b'/usr/lib/python3'])
+        self.assertRaises(TypeError, posixpath.commonpath,
+                          ['/usr/lib/', b'usr/lib/python3'])
+        self.assertRaises(TypeError, posixpath.commonpath,
+                          ['usr/lib/', b'/usr/lib/python3'])
 
 
 class PosixCommonTest(test_genericpath.CommonTest, unittest.TestCase):

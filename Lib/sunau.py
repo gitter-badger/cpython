@@ -210,12 +210,9 @@ class Au_read:
         self._framesize = self._framesize * self._nchannels
         if self._hdr_size > 24:
             self._info = file.read(self._hdr_size - 24)
-            for i in range(len(self._info)):
-                if self._info[i] == b'\0':
-                    self._info = self._info[:i]
-                    break
+            self._info, _, _ = self._info.partition(b'\0')
         else:
-            self._info = ''
+            self._info = b''
         try:
             self._data_pos = file.tell()
         except (AttributeError, OSError):
@@ -298,9 +295,11 @@ class Au_read:
         self._soundpos = pos
 
     def close(self):
-        if self._opened and self._file:
-            self._file.close()
-        self._file = None
+        file = self._file
+        if file:
+            self._file = None
+            if self._opened:
+                file.close()
 
 class Au_write:
 
@@ -441,9 +440,10 @@ class Au_write:
                     self._patchheader()
                 self._file.flush()
             finally:
-                if self._opened and self._file:
-                    self._file.close()
+                file = self._file
                 self._file = None
+                if self._opened:
+                    file.close()
 
     #
     # private methods

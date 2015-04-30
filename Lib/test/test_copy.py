@@ -7,7 +7,6 @@ import abc
 from operator import le, lt, ge, gt, eq, ne
 
 import unittest
-from test import support
 
 order_comparisons = le, lt, ge, gt
 equality_comparisons = eq, ne
@@ -145,6 +144,40 @@ class TestCopy(unittest.TestCase):
                 return self.foo == other.foo
         x = C(42)
         self.assertEqual(copy.copy(x), x)
+
+    def test_copy_inst_getnewargs(self):
+        class C(int):
+            def __new__(cls, foo):
+                self = int.__new__(cls)
+                self.foo = foo
+                return self
+            def __getnewargs__(self):
+                return self.foo,
+            def __eq__(self, other):
+                return self.foo == other.foo
+        x = C(42)
+        y = copy.copy(x)
+        self.assertIsInstance(y, C)
+        self.assertEqual(y, x)
+        self.assertIsNot(y, x)
+        self.assertEqual(y.foo, x.foo)
+
+    def test_copy_inst_getnewargs_ex(self):
+        class C(int):
+            def __new__(cls, *, foo):
+                self = int.__new__(cls)
+                self.foo = foo
+                return self
+            def __getnewargs_ex__(self):
+                return (), {'foo': self.foo}
+            def __eq__(self, other):
+                return self.foo == other.foo
+        x = C(foo=42)
+        y = copy.copy(x)
+        self.assertIsInstance(y, C)
+        self.assertEqual(y, x)
+        self.assertIsNot(y, x)
+        self.assertEqual(y.foo, x.foo)
 
     def test_copy_inst_getstate(self):
         class C:
@@ -403,6 +436,42 @@ class TestCopy(unittest.TestCase):
         y = copy.deepcopy(x)
         self.assertEqual(y, x)
         self.assertIsNot(y, x)
+        self.assertIsNot(y.foo, x.foo)
+
+    def test_deepcopy_inst_getnewargs(self):
+        class C(int):
+            def __new__(cls, foo):
+                self = int.__new__(cls)
+                self.foo = foo
+                return self
+            def __getnewargs__(self):
+                return self.foo,
+            def __eq__(self, other):
+                return self.foo == other.foo
+        x = C([42])
+        y = copy.deepcopy(x)
+        self.assertIsInstance(y, C)
+        self.assertEqual(y, x)
+        self.assertIsNot(y, x)
+        self.assertEqual(y.foo, x.foo)
+        self.assertIsNot(y.foo, x.foo)
+
+    def test_deepcopy_inst_getnewargs_ex(self):
+        class C(int):
+            def __new__(cls, *, foo):
+                self = int.__new__(cls)
+                self.foo = foo
+                return self
+            def __getnewargs_ex__(self):
+                return (), {'foo': self.foo}
+            def __eq__(self, other):
+                return self.foo == other.foo
+        x = C(foo=[42])
+        y = copy.deepcopy(x)
+        self.assertIsInstance(y, C)
+        self.assertEqual(y, x)
+        self.assertIsNot(y, x)
+        self.assertEqual(y.foo, x.foo)
         self.assertIsNot(y.foo, x.foo)
 
     def test_deepcopy_inst_getstate(self):
@@ -752,8 +821,5 @@ class TestCopy(unittest.TestCase):
 
 def global_foo(x, y): return x+y
 
-def test_main():
-    support.run_unittest(TestCopy)
-
 if __name__ == "__main__":
-    test_main()
+    unittest.main()

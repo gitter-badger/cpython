@@ -145,6 +145,13 @@ The module defines the following:
       library, and does not handle file descriptors that don't originate from
       WinSock.
 
+   .. versionchanged:: 3.5
+      The function is now retried with a recomputed timeout when interrupted by
+      a signal, except if the signal handler raises an exception (see
+      :pep:`475` for the rationale), instead of raising
+      :exc:`InterruptedError`.
+
+
 .. attribute:: PIPE_BUF
 
    The minimum number of bytes which can be written without blocking to a pipe
@@ -160,10 +167,7 @@ The module defines the following:
 .. _devpoll-objects:
 
 ``/dev/poll`` Polling Objects
-----------------------------------------------
-
-   http://developers.sun.com/solaris/articles/using_devpoll.html
-   http://developers.sun.com/solaris/articles/polling_efficient.html
+-----------------------------
 
 Solaris and derivatives have ``/dev/poll``. While :c:func:`select` is
 O(highest file descriptor) and :c:func:`poll` is O(number of file
@@ -210,7 +214,7 @@ object.
    .. warning::
 
       Registering a file descriptor that's already registered is not an
-      error, but the result is undefined. The appropiate action is to
+      error, but the result is undefined. The appropriate action is to
       unregister or modify it first. This is an important difference
       compared with :c:func:`poll`.
 
@@ -244,6 +248,12 @@ object.
    length of time in milliseconds which the system will wait for events before
    returning. If *timeout* is omitted, -1, or :const:`None`, the call will
    block until there is an event for this poll object.
+
+   .. versionchanged:: 3.5
+      The function is now retried with a recomputed timeout when interrupted by
+      a signal, except if the signal handler raises an exception (see
+      :pep:`475` for the rationale), instead of raising
+      :exc:`InterruptedError`.
 
 
 .. _epoll-objects:
@@ -325,6 +335,12 @@ Edge and Level Trigger Polling (epoll) Objects
 
    Wait for events. timeout in seconds (float)
 
+   .. versionchanged:: 3.5
+      The function is now retried with a recomputed timeout when interrupted by
+      a signal, except if the signal handler raises an exception (see
+      :pep:`475` for the rationale), instead of raising
+      :exc:`InterruptedError`.
+
 
 .. _poll-objects:
 
@@ -404,6 +420,12 @@ linearly scanned again. :c:func:`select` is O(highest file descriptor), while
    returning. If *timeout* is omitted, negative, or :const:`None`, the call will
    block until there is an event for this poll object.
 
+   .. versionchanged:: 3.5
+      The function is now retried with a recomputed timeout when interrupted by
+      a signal, except if the signal handler raises an exception (see
+      :pep:`475` for the rationale), instead of raising
+      :exc:`InterruptedError`.
+
 
 .. _kqueue-objects:
 
@@ -437,6 +459,12 @@ Kqueue Objects
    - changelist must be an iterable of kevent object or None
    - max_events must be 0 or a positive integer
    - timeout in seconds (floats possible)
+
+   .. versionchanged:: 3.5
+      The function is now retried with a recomputed timeout when interrupted by
+      a signal, except if the signal handler raises an exception (see
+      :pep:`475` for the rationale), instead of raising
+      :exc:`InterruptedError`.
 
 
 .. _kevent-objects:

@@ -66,6 +66,10 @@ class Unknown:
 
 unknown = Unknown()
 
+sig_end_marker = '--'
+
+
+_text_accumulator_nt = collections.namedtuple("_text_accumulator", "text append output")
 
 def _text_accumulator():
     text = []
@@ -73,8 +77,10 @@ def _text_accumulator():
         s = ''.join(text)
         text.clear()
         return s
-    return text, text.append, output
+    return _text_accumulator_nt(text, text.append, output)
 
+
+text_accumulator_nt = collections.namedtuple("text_accumulator", "text append")
 
 def text_accumulator():
     """
@@ -88,7 +94,7 @@ def text_accumulator():
        empties the accumulator.
     """
     text, append, output = _text_accumulator()
-    return append, output
+    return text_accumulator_nt(append, output)
 
 
 def warn_or_fail(fail=False, *args, filename=None, line_number=None):
@@ -521,6 +527,58 @@ def normalize_snippet(s, *, indent=0):
     return s
 
 
+def wrap_declarations(text, length=78):
+    """
+    A simple-minded text wrapper for C function declarations.
+
+    It views a declaration line as looking like this:
+        xxxxxxxx(xxxxxxxxx,xxxxxxxxx)
+    If called with length=30, it would wrap that line into
+        xxxxxxxx(xxxxxxxxx,
+                 xxxxxxxxx)
+    (If the declaration has zero or one parameters, this
+    function won't wrap it.)
+
+    If this doesn't work properly, it's probably better to
+    start from scratch with a more sophisticated algorithm,
+    rather than try and improve/debug this dumb little function.
+    """
+    lines = []
+    for line in text.split('\n'):
+        prefix, _, after_l_paren = line.partition('(')
+        if not after_l_paren:
+            lines.append(line)
+            continue
+        parameters, _, after_r_paren = after_l_paren.partition(')')
+        if not _:
+            lines.append(line)
+            continue
+        if ',' not in parameters:
+            lines.append(line)
+            continue
+        parameters = [x.strip() + ", " for x in parameters.split(',')]
+        prefix += "("
+        if len(prefix) < length:
+            spaces = " " * len(prefix)
+        else:
+            spaces = " " * 4
+
+        while parameters:
+            line = prefix
+            first = True
+            while parameters:
+                if (not first and
+                    (len(line) + len(parameters[0]) > length)):
+                    break
+                line += parameters.pop(0)
+                first = False
+            if not parameters:
+                line = line.rstrip(", ") + ")" + after_r_paren
+            lines.append(line.rstrip())
+            prefix = spaces
+    return "\n".join(lines)
+
+
 class CLanguage(Language):
 
     body_prefix   = "#"
@@ -555,8 +613,13 @@ class CLanguage(Language):
             add(quoted_for_c_string(line))
             add('\\n"\n')
 
-        text.pop()
-        add('"')
+        if text[-2] == sig_end_marker:
+            # If we only have a signature, add the blank line that the
+            # __text_signature__ getter expects to be there.
+            add('"\\n"')
+        else:
+            text.pop()
+            add('"')
         return ''.join(text)
 
     def output_templates(self, f):
@@ -589,8 +652,6 @@ class CLanguage(Language):
         meth_o = (len(parameters) == 1 and
               parameters[0].kind == inspect.Parameter.POSITIONAL_ONLY and
               not converters[0].is_optional() and
-              isinstance(converters[0], object_converter) and
-              converters[0].format_unit == 'O' and
               not new_or_init)
 
         # we have to set these things before we're done:
@@ -696,22 +757,38 @@ class CLanguage(Language):
         elif meth_o:
             flags = "METH_O"
 
-            meth_o_prototype = normalize_snippet("""
-                static PyObject *
-                {c_basename}({impl_parameters})
-                """)
+            if (isinstance(converters[0], object_converter) and
+                converters[0].format_unit == 'O'):
+                meth_o_prototype = normalize_snippet("""
+                    static PyObject *
+                    {c_basename}({impl_parameters})
+                    """)
 
-            if default_return_converter:
-                # maps perfectly to METH_O, doesn't need a return converter.
-                # so we skip making a parse function
-                # and call directly into the impl function.
-                impl_prototype = parser_prototype = parser_definition = ''
-                impl_definition = meth_o_prototype
+                if default_return_converter:
+                    # maps perfectly to METH_O, doesn't need a return converter.
+                    # so we skip making a parse function
+                    # and call directly into the impl function.
+                    impl_prototype = parser_prototype = parser_definition = ''
+                    impl_definition = meth_o_prototype
+                else:
+                    # SLIGHT HACK
+                    # use impl_parameters for the parser here!
+                    parser_prototype = meth_o_prototype
+                    parser_definition = parser_body(parser_prototype)
+
             else:
-                # SLIGHT HACK
-                # use impl_parameters for the parser here!
-                parser_prototype = meth_o_prototype
-                parser_definition = parser_body(parser_prototype)
+                argname = 'arg'
+                if parameters[0].name == argname:
+                    argname += '_'
+                parser_prototype = normalize_snippet("""
+                    static PyObject *
+                    {c_basename}({self_type}{self_name}, PyObject *%s)
+                    """ % argname)
+
+                parser_definition = parser_body(parser_prototype, normalize_snippet("""
+                    if (!PyArg_Parse(%s, "{format_units}:{name}", {parse_arguments}))
+                        goto exit;
+                    """ % argname, indent=4))
 
         elif has_option_groups:
             # positional parameters with option groups
@@ -746,8 +823,7 @@ class CLanguage(Language):
             parser_prototype = parser_prototype_varargs
 
             parser_definition = parser_body(parser_prototype, normalize_snippet("""
-                if (!PyArg_ParseTuple(args,
-                    "{format_units}:{name}",
+                if (!PyArg_ParseTuple(args, "{format_units}:{name}",
                     {parse_arguments}))
                     goto exit;
                 """, indent=4))
@@ -759,14 +835,12 @@ class CLanguage(Language):
             parser_prototype = parser_prototype_keyword
 
             body = normalize_snippet("""
-                if (!PyArg_ParseTupleAndKeywords(args, kwargs,
-                    "{format_units}:{name}", _keywords,
+                if (!PyArg_ParseTupleAndKeywords(args, kwargs, "{format_units}:{name}", _keywords,
                     {parse_arguments}))
                     goto exit;
             """, indent=4)
             parser_definition = parser_body(parser_prototype, normalize_snippet("""
-                if (!PyArg_ParseTupleAndKeywords(args, kwargs,
-                    "{format_units}:{name}", _keywords,
+                if (!PyArg_ParseTupleAndKeywords(args, kwargs, "{format_units}:{name}", _keywords,
                     {parse_arguments}))
                     goto exit;
                 """, indent=4))
@@ -820,7 +894,8 @@ class CLanguage(Language):
             cpp_if = "#if " + conditional
             cpp_endif = "#endif /* " + conditional + " */"
 
-            if methoddef_define:
+            if methoddef_define and f.name not in clinic.ifndef_symbols:
+                clinic.ifndef_symbols.add(f.name)
                 methoddef_ifndef = normalize_snippet("""
                     #ifndef {methoddef_name}
                         #define {methoddef_name}
@@ -1015,12 +1090,12 @@ class CLanguage(Language):
         # when we're METH_O, but have a custom return converter,
         # we use "impl_parameters" for the parsing function
         # because that works better.  but that means we must
-        # supress actually declaring the impl's parameters
+        # suppress actually declaring the impl's parameters
         # as variables in the parsing function.  but since it's
         # METH_O, we have exactly one anyway, so we know exactly
         # where it is.
         if ("METH_O" in templates['methoddef_define'] and
-            not default_return_converter):
+            '{impl_parameters}' in templates['parser_prototype']):
             data.declarations.pop(0)
 
         template_dict = {}
@@ -1078,7 +1153,8 @@ class CLanguage(Language):
         if has_option_groups:
             self.render_option_group_parsing(f, template_dict)
 
-        for name, destination in clinic.field_destinations.items():
+        # buffers, not destination
+        for name, destination in clinic.destination_buffers.items():
             template = templates[name]
             if has_option_groups:
                 template = linear_format(template,
@@ -1099,6 +1175,11 @@ class CLanguage(Language):
                 )
 
             s = template.format_map(template_dict)
+
+            # mild hack:
+            # reflow long impl declarations
+            if name in {"impl_prototype", "impl_definition"}:
+                s = wrap_declarations(s)
 
             if clinic.line_prefix:
                 s = indent_all_lines(s, clinic.line_prefix)
@@ -1252,10 +1333,11 @@ class BlockParser:
         match = self.start_re.match(line.lstrip())
         return match.group(1) if match else None
 
-    def _line(self):
+    def _line(self, lookahead=False):
         self.line_number += 1
         line = self.input.pop()
-        self.language.parse_line(line)
+        if not lookahead:
+            self.language.parse_line(line)
         return line
 
     def parse_verbatim_block(self):
@@ -1311,7 +1393,7 @@ class BlockParser:
         output_add, output_output = text_accumulator()
         arguments = None
         while self.input:
-            line = self._line()
+            line = self._line(lookahead=True)
             match = checksum_re.match(line.lstrip())
             arguments = match.group(1) if match else None
             if arguments:
@@ -1402,12 +1484,48 @@ class BlockPrinter:
         self.f.write(text)
 
 
+class BufferSeries:
+    """
+    Behaves like a "defaultlist".
+    When you ask for an index that doesn't exist yet,
+    the object grows the list until that item exists.
+    So o[n] will always work.
+
+    Supports negative indices for actual items.
+    e.g. o[-1] is an element immediately preceding o[0].
+    """
+
+    def __init__(self):
+        self._start = 0
+        self._array = []
+        self._constructor = _text_accumulator
+
+    def __getitem__(self, i):
+        i -= self._start
+        if i < 0:
+            self._start += i
+            prefix = [self._constructor() for x in range(-i)]
+            self._array = prefix + self._array
+            i = 0
+        while i >= len(self._array):
+            self._array.append(self._constructor())
+        return self._array[i]
+
+    def clear(self):
+        for ta in self._array:
+            ta._text.clear()
+
+    def dump(self):
+        texts = [ta.output() for ta in self._array]
+        return "".join(texts)
+
+
 class Destination:
     def __init__(self, name, type, clinic, *args):
         self.name = name
         self.type = type
         self.clinic = clinic
-        valid_types = ('buffer', 'file', 'suppress', 'two-pass')
+        valid_types = ('buffer', 'file', 'suppress')
         if type not in valid_types:
             fail("Invalid destination type " + repr(type) + " for " + name + " , must be " + ', '.join(valid_types))
         extra_arguments = 1 if type == "file" else 0
@@ -1426,10 +1544,8 @@ class Destination:
             d['basename'] = basename
             d['basename_root'], d['basename_extension'] = os.path.splitext(filename)
             self.filename = args[0].format_map(d)
-        if type == 'two-pass':
-            self.id = None
 
-        self.text, self.append, self._dump = _text_accumulator()
+        self.buffers = BufferSeries()
 
     def __repr__(self):
         if self.type == 'file':
@@ -1441,15 +1557,10 @@ class Destination:
     def clear(self):
         if self.type != 'buffer':
             fail("Can't clear destination" + self.name + " , it's not of type buffer")
-        self.text.clear()
+        self.buffers.clear()
 
     def dump(self):
-        if self.type == 'two-pass':
-            if self.id is None:
-                self.id = str(uuid.uuid4())
-                return self.id
-            fail("You can only dump a two-pass buffer exactly once!")
-        return self._dump()
+        return self.buffers.dump()
 
 
 # maps strings to Language objects.
@@ -1488,47 +1599,42 @@ class Clinic:
     presets_text = """
 preset block
 everything block
+methoddef_ifndef buffer 1
 docstring_prototype suppress
 parser_prototype suppress
 cpp_if suppress
 cpp_endif suppress
-methoddef_ifndef buffer
 
 preset original
 everything block
+methoddef_ifndef buffer 1
 docstring_prototype suppress
 parser_prototype suppress
 cpp_if suppress
 cpp_endif suppress
-methoddef_ifndef buffer
 
 preset file
 everything file
+methoddef_ifndef file 1
 docstring_prototype suppress
 parser_prototype suppress
 impl_definition block
 
 preset buffer
 everything buffer
+methoddef_ifndef buffer 1
+impl_definition block
 docstring_prototype suppress
 impl_prototype suppress
 parser_prototype suppress
-impl_definition block
 
 preset partial-buffer
 everything buffer
+methoddef_ifndef buffer 1
 docstring_prototype block
 impl_prototype suppress
 methoddef_define block
 parser_prototype block
-impl_definition block
-
-preset two-pass
-everything buffer
-docstring_prototype two-pass
-impl_prototype suppress
-methoddef_define two-pass
-parser_prototype two-pass
 impl_definition block
 
 """
@@ -1554,25 +1660,25 @@ impl_definition block
         self.add_destination("block", "buffer")
         self.add_destination("suppress", "suppress")
         self.add_destination("buffer", "buffer")
-        self.add_destination("two-pass", "two-pass")
         if filename:
             self.add_destination("file", "file", "{dirname}/clinic/{basename}.h")
 
-        d = self.destinations.get
-        self.field_destinations = collections.OrderedDict((
-            ('cpp_if', d('suppress')),
+        d = self.get_destination_buffer
+        self.destination_buffers = collections.OrderedDict((
+            ('cpp_if', d('file')),
             ('docstring_prototype', d('suppress')),
-            ('docstring_definition', d('block')),
-            ('methoddef_define', d('block')),
-            ('impl_prototype', d('block')),
+            ('docstring_definition', d('file')),
+            ('methoddef_define', d('file')),
+            ('impl_prototype', d('file')),
             ('parser_prototype', d('suppress')),
-            ('parser_definition', d('block')),
-            ('cpp_endif', d('suppress')),
-            ('methoddef_ifndef', d('buffer')),
+            ('parser_definition', d('file')),
+            ('cpp_endif', d('file')),
+            ('methoddef_ifndef', d('file', 1)),
             ('impl_definition', d('block')),
         ))
 
-        self.field_destinations_stack = []
+        self.destination_buffers_stack = []
+        self.ifndef_symbols = set()
 
         self.presets = {}
         preset = None
@@ -1580,36 +1686,42 @@ impl_definition block
             line = line.strip()
             if not line:
                 continue
-            name, value = line.split()
+            name, value, *options = line.split()
             if name == 'preset':
                 self.presets[value] = preset = collections.OrderedDict()
                 continue
 
-            destination = self.get_destination(value)
+            if len(options):
+                index = int(options[0])
+            else:
+                index = 0
+            buffer = self.get_destination_buffer(value, index)
 
             if name == 'everything':
-                for name in self.field_destinations:
-                    preset[name] = destination
+                for name in self.destination_buffers:
+                    preset[name] = buffer
                 continue
 
-            assert name in self.field_destinations
-            preset[name] = destination
+            assert name in self.destination_buffers
+            preset[name] = buffer
 
         global clinic
         clinic = self
-
-    def get_destination(self, name, default=unspecified):
-        d = self.destinations.get(name)
-        if not d:
-            if default is not unspecified:
-                return default
-            fail("Destination does not exist: " + repr(name))
-        return d
 
     def add_destination(self, name, type, *args):
         if name in self.destinations:
             fail("Destination already exists: " + repr(name))
         self.destinations[name] = Destination(name, type, self, *args)
+
+    def get_destination(self, name):
+        d = self.destinations.get(name)
+        if not d:
+            fail("Destination does not exist: " + repr(name))
+        return d
+
+    def get_destination_buffer(self, name, item=0):
+        d = self.get_destination(name)
+        return d.buffers[item]
 
     def parse(self, input):
         printer = self.printer
@@ -1630,17 +1742,11 @@ impl_definition block
 
         second_pass_replacements = {}
 
+        # these are destinations not buffers
         for name, destination in self.destinations.items():
             if destination.type == 'suppress':
                 continue
-            output = destination._dump()
-
-            if destination.type == 'two-pass':
-                if destination.id:
-                    second_pass_replacements[destination.id] = output
-                elif output:
-                    fail("Two-pass buffer " + repr(name) + " not empty at end of file!")
-                continue
+            output = destination.dump()
 
             if output:
 
@@ -1830,9 +1936,9 @@ __gt__
 __hash__
 __iadd__
 __iand__
-__idivmod__
 __ifloordiv__
 __ilshift__
+__imatmul__
 __imod__
 __imul__
 __index__
@@ -1849,6 +1955,7 @@ __le__
 __len__
 __lshift__
 __lt__
+__matmul__
 __mod__
 __mul__
 __neg__
@@ -1863,6 +1970,7 @@ __rdivmod__
 __repr__
 __rfloordiv__
 __rlshift__
+__rmatmul__
 __rmod__
 __rmul__
 __ror__
@@ -2044,11 +2152,9 @@ def add_default_legacy_c_converter(cls):
     # automatically add converter for default format unit
     # (but without stomping on the existing one if it's already
     # set, in case you subclass)
-    if ((cls.format_unit != 'O&') and
+    if ((cls.format_unit not in ('O&', '')) and
         (cls.format_unit not in legacy_converters)):
         legacy_converters[cls.format_unit] = cls
-        if cls.format_unit:
-            legacy_converters[cls.format_unit] = cls
     return cls
 
 def add_legacy_c_converter(format_unit, **kwargs):
@@ -2382,12 +2488,12 @@ class bool_converter(CConverter):
 
 class char_converter(CConverter):
     type = 'char'
-    default_type = str
+    default_type = (bytes, bytearray)
     format_unit = 'c'
     c_ignored_default = "'\0'"
 
     def converter_init(self):
-        if isinstance(self.default, str) and (len(self.default) != 1):
+        if isinstance(self.default, self.default_type) and (len(self.default) != 1):
             fail("char_converter: illegal default value " + repr(self.default))
 
 
@@ -2420,18 +2526,20 @@ class unsigned_short_converter(CConverter):
         if not bitwise:
             fail("Unsigned shorts must be bitwise (for now).")
 
-@add_legacy_c_converter('C', types='str')
+@add_legacy_c_converter('C', types={'str'})
 class int_converter(CConverter):
     type = 'int'
     default_type = int
     format_unit = 'i'
     c_ignored_default = "0"
 
-    def converter_init(self, *, types='int'):
-        if types == 'str':
+    def converter_init(self, *, types={'int'}, type=None):
+        if types == {'str'}:
             self.format_unit = 'C'
-        elif types != 'int':
-            fail("int_converter: illegal 'types' argument")
+        elif types != {'int'}:
+            fail("int_converter: illegal 'types' argument " + repr(types))
+        if type != None:
+            self.type = type
 
 class unsigned_int_converter(CConverter):
     type = 'unsigned int'
@@ -2520,63 +2628,64 @@ class object_converter(CConverter):
             self.type = type
 
 
-@add_legacy_c_converter('s#', length=True)
-@add_legacy_c_converter('y', types="bytes")
-@add_legacy_c_converter('y#', types="bytes", length=True)
+#
+# We define three string conventions for buffer types in the 'types' argument:
+#  'buffer' : any object supporting the buffer interface
+#  'rwbuffer': any object supporting the buffer interface, but must be writeable
+#  'robuffer': any object supporting the buffer interface, but must not be writeable
+#
+
+@add_legacy_c_converter('s#', types={"str", "robuffer"}, length=True)
+@add_legacy_c_converter('y', types={"robuffer"})
+@add_legacy_c_converter('y#', types={"robuffer"}, length=True)
 @add_legacy_c_converter('z', nullable=True)
-@add_legacy_c_converter('z#', nullable=True, length=True)
+@add_legacy_c_converter('z#', types={"str", "robuffer"}, nullable=True, length=True)
+# add_legacy_c_converter not supported for es, es#, et, et#
+# because of their extra encoding argument
 class str_converter(CConverter):
     type = 'const char *'
     default_type = (str, Null, NoneType)
     format_unit = 's'
 
-    def converter_init(self, *, encoding=None, types="str",
+    def converter_init(self, *, encoding=None, types={"str"},
         length=False, nullable=False, zeroes=False):
 
-        types = set(types.strip().split())
-        bytes_type = set(("bytes",))
-        str_type = set(("str",))
-        all_3_type = set(("bytearray",)) | bytes_type | str_type
-        is_bytes = types == bytes_type
-        is_str = types == str_type
-        is_all_3 = types == all_3_type
-
         self.length = bool(length)
+
+        is_b_or_ba = types == {"bytes", "bytearray"}
+        is_str = types == {"str"}
+        is_robuffer = types == {"robuffer"}
+        is_str_or_robuffer = types == {"str", "robuffer"}
+
         format_unit = None
 
         if encoding:
             self.encoding = encoding
 
-            if is_str and not (length or zeroes or nullable):
+            if   is_str     and not length and not zeroes and not nullable:
                 format_unit = 'es'
-            elif is_all_3 and not (length or zeroes or nullable):
-                format_unit = 'et'
-            elif is_str and length and zeroes and not nullable:
+            elif is_str     and     length and     zeroes and     nullable:
                 format_unit = 'es#'
-            elif is_all_3 and length and not (nullable or zeroes):
+            elif is_b_or_ba and not length and not zeroes and not nullable:
+                format_unit = 'et'
+            elif is_b_or_ba and     length and     zeroes and     nullable:
                 format_unit = 'et#'
-
-            if format_unit.endswith('#'):
-                fail("Sorry: code using format unit ", repr(format_unit), "probably doesn't work properly yet.\nGive Larry your test case and he'll it.")
-                # TODO set pointer to NULL
-                # TODO add cleanup for buffer
-                pass
 
         else:
             if zeroes:
                 fail("str_converter: illegal combination of arguments (zeroes is only legal with an encoding)")
 
-            if is_bytes and not (nullable or length):
-                format_unit = 'y'
-            elif is_bytes and length and not nullable:
-                format_unit = 'y#'
-            elif is_str and not (nullable or length):
+            if is_str               and not length and not nullable:
                 format_unit = 's'
-            elif is_str and length and not nullable:
-                format_unit = 's#'
-            elif is_str and nullable  and not length:
+            elif is_str             and not length and     nullable:
                 format_unit = 'z'
-            elif is_str and nullable and length:
+            elif is_robuffer        and not length and not nullable:
+                format_unit = 'y'
+            elif is_robuffer        and     length and not nullable:
+                format_unit = 'y#'
+            elif is_str_or_robuffer and     length and not nullable:
+                format_unit = 's#'
+            elif is_str_or_robuffer and     length and     nullable:
                 format_unit = 'z#'
 
         if not format_unit:
@@ -2587,10 +2696,12 @@ class str_converter(CConverter):
 class PyBytesObject_converter(CConverter):
     type = 'PyBytesObject *'
     format_unit = 'S'
+    # types = {'bytes'}
 
 class PyByteArrayObject_converter(CConverter):
     type = 'PyByteArrayObject *'
     format_unit = 'Y'
+    # types = {'bytearray'}
 
 class unicode_converter(CConverter):
     type = 'PyObject *'
@@ -2612,43 +2723,29 @@ class Py_UNICODE_converter(CConverter):
             self.length = True
         self.format_unit = format_unit
 
-#
-# We define three string conventions for buffer types in the 'types' argument:
-#  'buffer' : any object supporting the buffer interface
-#  'rwbuffer': any object supporting the buffer interface, but must be writeable
-#  'robuffer': any object supporting the buffer interface, but must not be writeable
-#
-@add_legacy_c_converter('s*', types='str bytes bytearray buffer')
-@add_legacy_c_converter('z*', types='str bytes bytearray buffer', nullable=True)
-@add_legacy_c_converter('w*', types='bytearray rwbuffer')
+@add_legacy_c_converter('s*', types={'str', 'buffer'})
+@add_legacy_c_converter('z*', types={'str', 'buffer'}, nullable=True)
+@add_legacy_c_converter('w*', types={'rwbuffer'})
 class Py_buffer_converter(CConverter):
     type = 'Py_buffer'
     format_unit = 'y*'
     impl_by_reference = True
     c_ignored_default = "{NULL, NULL}"
 
-    def converter_init(self, *, types='bytes bytearray buffer', nullable=False):
+    def converter_init(self, *, types={'buffer'}, nullable=False):
         if self.default not in (unspecified, None):
             fail("The only legal default value for Py_buffer is None.")
         self.c_default = self.c_ignored_default
-        types = set(types.strip().split())
-        bytes_type = set(('bytes',))
-        bytearray_type = set(('bytearray',))
-        buffer_type = set(('buffer',))
-        rwbuffer_type = set(('rwbuffer',))
-        robuffer_type = set(('robuffer',))
-        str_type = set(('str',))
-        bytes_bytearray_buffer_type = bytes_type | bytearray_type | buffer_type
 
         format_unit = None
-        if types == (str_type | bytes_bytearray_buffer_type):
+        if types == {'str', 'buffer'}:
             format_unit = 's*' if not nullable else 'z*'
         else:
             if nullable:
                 fail('Py_buffer_converter: illegal combination of arguments (nullable=True)')
-            elif types == (bytes_bytearray_buffer_type):
+            elif types == {'buffer'}:
                 format_unit = 'y*'
-            elif types == (bytearray_type | rwbuffer_type):
+            elif types == {'rwbuffer'}:
                 format_unit = 'w*'
         if not format_unit:
             fail("Py_buffer_converter: illegal combination of arguments")
@@ -2866,10 +2963,11 @@ class long_return_converter(CReturnConverter):
     type = 'long'
     conversion_fn = 'PyLong_FromLong'
     cast = ''
+    unsigned_cast = ''
 
     def render(self, function, data):
         self.declare(data)
-        self.err_occurred_if("_return_value == -1", data)
+        self.err_occurred_if("_return_value == {}-1".format(self.unsigned_cast), data)
         data.return_conversion.append(
             ''.join(('return_value = ', self.conversion_fn, '(', self.cast, '_return_value);\n')))
 
@@ -2890,10 +2988,12 @@ class init_return_converter(long_return_converter):
 class unsigned_long_return_converter(long_return_converter):
     type = 'unsigned long'
     conversion_fn = 'PyLong_FromUnsignedLong'
+    unsigned_cast = '(unsigned long)'
 
 class unsigned_int_return_converter(unsigned_long_return_converter):
     type = 'unsigned int'
     cast = '(unsigned long)'
+    unsigned_cast = '(unsigned int)'
 
 class Py_ssize_t_return_converter(long_return_converter):
     type = 'Py_ssize_t'
@@ -2902,6 +3002,7 @@ class Py_ssize_t_return_converter(long_return_converter):
 class size_t_return_converter(long_return_converter):
     type = 'size_t'
     conversion_fn = 'PyLong_FromSize_t'
+    unsigned_cast = '(size_t)'
 
 
 class double_return_converter(CReturnConverter):
@@ -3097,43 +3198,43 @@ class DSLParser:
         fail("unknown destination command", repr(command))
 
 
-    def directive_output(self, field, destination=''):
-        fd = self.clinic.field_destinations
+    def directive_output(self, command_or_name, destination=''):
+        fd = self.clinic.destination_buffers
 
-        if field == "preset":
+        if command_or_name == "preset":
             preset = self.clinic.presets.get(destination)
             if not preset:
                 fail("Unknown preset " + repr(destination) + "!")
             fd.update(preset)
             return
 
-        if field == "push":
-            self.clinic.field_destinations_stack.append(fd.copy())
+        if command_or_name == "push":
+            self.clinic.destination_buffers_stack.append(fd.copy())
             return
 
-        if field == "pop":
-            if not self.clinic.field_destinations_stack:
+        if command_or_name == "pop":
+            if not self.clinic.destination_buffers_stack:
                 fail("Can't 'output pop', stack is empty!")
-            previous_fd = self.clinic.field_destinations_stack.pop()
+            previous_fd = self.clinic.destination_buffers_stack.pop()
             fd.update(previous_fd)
             return
 
         # secret command for debugging!
-        if field == "print":
+        if command_or_name == "print":
             self.block.output.append(pprint.pformat(fd))
             self.block.output.append('\n')
             return
 
         d = self.clinic.get_destination(destination)
 
-        if field == "everything":
+        if command_or_name == "everything":
             for name in list(fd):
                 fd[name] = d
             return
 
-        if field not in fd:
-            fail("Invalid field " + repr(field) + ", must be one of:\n  preset push pop print everything " + " ".join(fd))
-        fd[field] = d
+        if command_or_name not in fd:
+            fail("Invalid command / destination name " + repr(command_or_name) + ", must be one of:\n  preset push pop print everything " + " ".join(fd))
+        fd[command_or_name] = d
 
     def directive_dump(self, name):
         self.block.output.append(self.clinic.get_destination(name).dump())
@@ -3729,7 +3830,7 @@ class DSLParser:
             if self.keyword_only:
                 fail("Function " + self.function.name + " mixes keyword-only and positional-only parameters, which is unsupported.")
             self.parameter_state = self.ps_seen_slash
-            # fixup preceeding parameters
+            # fixup preceding parameters
             for p in self.function.parameters.values():
                 if (p.kind != inspect.Parameter.POSITIONAL_OR_KEYWORD and not isinstance(p.converter, self_converter)):
                     fail("Function " + self.function.name + " mixes keyword-only and positional-only parameters, which is unsupported.")
@@ -3925,7 +4026,7 @@ class DSLParser:
                 # for __init__.  (it can't be, __init__ doesn't
                 # have a docstring.)  if this is an __init__
                 # (or __new__), then this signature is for
-                # calling the class to contruct a new instance.
+                # calling the class to construct a new instance.
                 p_add('$')
 
             name = p.converter.signature_name or p.name
@@ -3962,7 +4063,7 @@ class DSLParser:
         #     add(f.return_converter.py_default)
 
         if not f.docstring_only:
-            add("\n--\n")
+            add("\n" + sig_end_marker + "\n")
 
         docstring_first_line = output()
 
@@ -4167,7 +4268,7 @@ def main(argv):
             cmdline.print_usage()
             sys.exit(-1)
         for root, dirs, files in os.walk('.'):
-            for rcs_dir in ('.svn', '.git', '.hg', 'build'):
+            for rcs_dir in ('.svn', '.git', '.hg', 'build', 'externals'):
                 if rcs_dir in dirs:
                     dirs.remove(rcs_dir)
             for filename in files:

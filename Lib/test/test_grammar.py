@@ -1,7 +1,7 @@
 # Python test set -- part 1, grammar.
 # This just tests whether the parser accepts them all.
 
-from test.support import run_unittest, check_syntax_error
+from test.support import check_syntax_error
 import unittest
 import sys
 # testing import *
@@ -79,6 +79,12 @@ class TokenTests(unittest.TestCase):
         x = 3.e14
         x = .3e14
         x = 3.1e4
+
+    def test_float_exponent_tokenization(self):
+        # See issue 21642.
+        self.assertEqual(1 if 1else 0, 1)
+        self.assertEqual(1 if 0else 0, 0)
+        self.assertRaises(SyntaxError, eval, "0 if 1Else 0")
 
     def test_string_literals(self):
         x = ''; y = ""; self.assertTrue(len(x) == 0 and x == y)
@@ -383,6 +389,31 @@ class GrammarTests(unittest.TestCase):
 
         check_syntax_error(self, "x + 1 = 1")
         check_syntax_error(self, "a + 1 = b + 2")
+
+    # Check the heuristic for print & exec covers significant cases
+    # As well as placing some limits on false positives
+    def test_former_statements_refer_to_builtins(self):
+        keywords = "print", "exec"
+        # Cases where we want the custom error
+        cases = [
+            "{} foo",
+            "{} {{1:foo}}",
+            "if 1: {} foo",
+            "if 1: {} {{1:foo}}",
+            "if 1:\n    {} foo",
+            "if 1:\n    {} {{1:foo}}",
+        ]
+        for keyword in keywords:
+            custom_msg = "call to '{}'".format(keyword)
+            for case in cases:
+                source = case.format(keyword)
+                with self.subTest(source=source):
+                    with self.assertRaisesRegex(SyntaxError, custom_msg):
+                        exec(source)
+                source = source.replace("foo", "(foo.)")
+                with self.subTest(source=source):
+                    with self.assertRaisesRegex(SyntaxError, "invalid syntax"):
+                        exec(source)
 
     def test_del_stmt(self):
         # 'del' exprlist
@@ -985,9 +1016,20 @@ class GrammarTests(unittest.TestCase):
         self.assertFalse((False is 2) is 3)
         self.assertFalse(False is 2 is 3)
 
+    def test_matrix_mul(self):
+        # This is not intended to be a comprehensive test, rather just to be few
+        # samples of the @ operator in test_grammar.py.
+        class M:
+            def __matmul__(self, o):
+                return 4
+            def __imatmul__(self, o):
+                self.other = o
+                return self
+        m = M()
+        self.assertEqual(m @ m, 4)
+        m @= 42
+        self.assertEqual(m.other, 42)
 
-def test_main():
-    run_unittest(TokenTests, GrammarTests)
 
 if __name__ == '__main__':
-    test_main()
+    unittest.main()

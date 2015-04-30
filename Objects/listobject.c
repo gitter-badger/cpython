@@ -1832,7 +1832,8 @@ merge_collapse(MergeState *ms)
     assert(ms);
     while (ms->n > 1) {
         Py_ssize_t n = ms->n - 2;
-        if (n > 0 && p[n-1].len <= p[n].len + p[n+1].len) {
+        if ((n > 0 && p[n-1].len <= p[n].len + p[n+1].len) ||
+            (n > 1 && p[n-2].len <= p[n-1].len + p[n].len)) {
             if (p[n-1].len < p[n+1].len)
                 --n;
             if (merge_at(ms, n) < 0)
@@ -1960,8 +1961,10 @@ listsort(PyListObject *self, PyObject *args, PyObject *kwds)
             keys = &ms.temparray[saved_ob_size+1];
         else {
             keys = PyMem_MALLOC(sizeof(PyObject *) * saved_ob_size);
-            if (keys == NULL)
-                return NULL;
+            if (keys == NULL) {
+                PyErr_NoMemory();
+                goto keyfunc_fail;
+            }
         }
 
         for (i = 0; i < saved_ob_size ; i++) {
@@ -2444,7 +2447,7 @@ list_subscript(PyListObject* self, PyObject* item)
     }
     else {
         PyErr_Format(PyExc_TypeError,
-                     "list indices must be integers, not %.200s",
+                     "list indices must be integers or slices, not %.200s",
                      item->ob_type->tp_name);
         return NULL;
     }
@@ -2608,7 +2611,7 @@ list_ass_subscript(PyListObject* self, PyObject* item, PyObject* value)
     }
     else {
         PyErr_Format(PyExc_TypeError,
-                     "list indices must be integers, not %.200s",
+                     "list indices must be integers or slices, not %.200s",
                      item->ob_type->tp_name);
         return -1;
     }

@@ -266,6 +266,12 @@ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx*/
      PyAPI_FUNC(PyObject *) PyObject_Call(PyObject *callable_object,
                                           PyObject *args, PyObject *kw);
 
+#ifndef Py_LIMITED_API
+     PyAPI_FUNC(PyObject *) _Py_CheckFunctionResult(PyObject *func,
+                                                    PyObject *result,
+                                                    const char *where);
+#endif
+
        /*
      Call a callable Python object, callable_object, with
      arguments and keywords arguments.  The 'args' argument can not be
@@ -658,6 +664,12 @@ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx*/
      o1*o2.
        */
 
+     PyAPI_FUNC(PyObject *) PyNumber_MatrixMultiply(PyObject *o1, PyObject *o2);
+
+       /*
+     This is the equivalent of the Python expression: o1 @ o2.
+       */
+
      PyAPI_FUNC(PyObject *) PyNumber_FloorDivide(PyObject *o1, PyObject *o2);
 
        /*
@@ -830,6 +842,12 @@ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx*/
      Returns the result of multiplying o1 by o2, possibly in-place, or
      null on failure.  This is the equivalent of the Python expression:
      o1 *= o2.
+       */
+
+     PyAPI_FUNC(PyObject *) PyNumber_InPlaceMatrixMultiply(PyObject *o1, PyObject *o2);
+
+       /*
+     This is the equivalent of the Python expression: o1 @= o2.
        */
 
      PyAPI_FUNC(PyObject *) PyNumber_InPlaceFloorDivide(PyObject *o1,
@@ -1021,7 +1039,7 @@ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx*/
 
      PyAPI_FUNC(PyObject *) PySequence_Fast(PyObject *o, const char* m);
        /*
-     Returns the sequence, o, as a list, unless it's already a
+     Return the sequence, o, as a list, unless it's already a
      tuple or list.  Use PySequence_Fast_GET_ITEM to access the
      members of this list, and PySequence_Fast_GET_SIZE to get its length.
 

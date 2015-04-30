@@ -47,7 +47,7 @@ typedef struct _PyEncoderObject {
     PyObject *item_separator;
     PyObject *sort_keys;
     PyObject *skipkeys;
-    int fast_encode;
+    PyCFunction fast_encode;
     int allow_nan;
 } PyEncoderObject;
 
@@ -182,17 +182,24 @@ ascii_escape_unicode(PyObject *pystr)
     /* Compute the output size */
     for (i = 0, output_size = 2; i < input_chars; i++) {
         Py_UCS4 c = PyUnicode_READ(kind, input, i);
-        if (S_CHAR(c))
-            output_size++;
+        Py_ssize_t d;
+        if (S_CHAR(c)) {
+            d = 1;
+        }
         else {
             switch(c) {
             case '\\': case '"': case '\b': case '\f':
             case '\n': case '\r': case '\t':
-                output_size += 2; break;
+                d = 2; break;
             default:
-                output_size += c >= 0x10000 ? 12 : 6;
+                d = c >= 0x10000 ? 12 : 6;
             }
         }
+        if (output_size > PY_SSIZE_T_MAX - d) {
+            PyErr_SetString(PyExc_OverflowError, "string is too long to escape");
+            return NULL;
+        }
+        output_size += d;
     }
 
     rval = PyUnicode_New(output_size, 127);
@@ -218,26 +225,116 @@ ascii_escape_unicode(PyObject *pystr)
     return rval;
 }
 
+static PyObject *
+escape_unicode(PyObject *pystr)
+{
+    /* Take a PyUnicode pystr and return a new escaped PyUnicode */
+    Py_ssize_t i;
+    Py_ssize_t input_chars;
+    Py_ssize_t output_size;
+    Py_ssize_t chars;
+    PyObject *rval;
+    void *input;
+    int kind;
+    Py_UCS4 maxchar;
+
+    if (PyUnicode_READY(pystr) == -1)
+        return NULL;
+
+    maxchar = PyUnicode_MAX_CHAR_VALUE(pystr);
+    input_chars = PyUnicode_GET_LENGTH(pystr);
+    input = PyUnicode_DATA(pystr);
+    kind = PyUnicode_KIND(pystr);
+
+    /* Compute the output size */
+    for (i = 0, output_size = 2; i < input_chars; i++) {
+        Py_UCS4 c = PyUnicode_READ(kind, input, i);
+        switch (c) {
+        case '\\': case '"': case '\b': case '\f':
+        case '\n': case '\r': case '\t':
+            output_size += 2;
+            break;
+        default:
+            if (c <= 0x1f)
+                output_size += 6;
+            else
+                output_size++;
+        }
+    }
+
+    rval = PyUnicode_New(output_size, maxchar);
+    if (rval == NULL)
+        return NULL;
+
+    kind = PyUnicode_KIND(rval);
+
+#define ENCODE_OUTPUT do { \
+        chars = 0; \
+        output[chars++] = '"'; \
+        for (i = 0; i < input_chars; i++) { \
+            Py_UCS4 c = PyUnicode_READ(kind, input, i); \
+            switch (c) { \
+            case '\\': output[chars++] = '\\'; output[chars++] = c; break; \
+            case '"':  output[chars++] = '\\'; output[chars++] = c; break; \
+            case '\b': output[chars++] = '\\'; output[chars++] = 'b'; break; \
+            case '\f': output[chars++] = '\\'; output[chars++] = 'f'; break; \
+            case '\n': output[chars++] = '\\'; output[chars++] = 'n'; break; \
+            case '\r': output[chars++] = '\\'; output[chars++] = 'r'; break; \
+            case '\t': output[chars++] = '\\'; output[chars++] = 't'; break; \
+            default: \
+                if (c <= 0x1f) { \
+                    output[chars++] = '\\'; \
+                    output[chars++] = 'u'; \
+                    output[chars++] = '0'; \
+                    output[chars++] = '0'; \
+                    output[chars++] = Py_hexdigits[(c >> 4) & 0xf]; \
+                    output[chars++] = Py_hexdigits[(c     ) & 0xf]; \
+                } else { \
+                    output[chars++] = c; \
+                } \
+            } \
+        } \
+        output[chars++] = '"'; \
+    } while (0)
+
+    if (kind == PyUnicode_1BYTE_KIND) {
+        Py_UCS1 *output = PyUnicode_1BYTE_DATA(rval);
+        ENCODE_OUTPUT;
+    } else if (kind == PyUnicode_2BYTE_KIND) {
+        Py_UCS2 *output = PyUnicode_2BYTE_DATA(rval);
+        ENCODE_OUTPUT;
+    } else {
+        Py_UCS4 *output = PyUnicode_4BYTE_DATA(rval);
+        assert(kind == PyUnicode_4BYTE_KIND);
+        ENCODE_OUTPUT;
+    }
+#undef ENCODE_OUTPUT
+
+#ifdef Py_DEBUG
+    assert(_PyUnicode_CheckConsistency(rval, 1));
+#endif
+    return rval;
+}
+
 static void
 raise_errmsg(char *msg, PyObject *s, Py_ssize_t end)
 {
-    /* Use the Python function json.decoder.errmsg to raise a nice
-    looking ValueError exception */
-    static PyObject *errmsg_fn = NULL;
-    PyObject *pymsg;
-    if (errmsg_fn == NULL) {
+    /* Use JSONDecodeError exception to raise a nice looking ValueError subclass */
+    static PyObject *JSONDecodeError = NULL;
+    PyObject *exc;
+    if (JSONDecodeError == NULL) {
         PyObject *decoder = PyImport_ImportModule("json.decoder");
         if (decoder == NULL)
             return;
-        errmsg_fn = PyObject_GetAttrString(decoder, "errmsg");
+        JSONDecodeError = PyObject_GetAttrString(decoder, "JSONDecodeError");
         Py_DECREF(decoder);
-        if (errmsg_fn == NULL)
+        if (JSONDecodeError == NULL)
             return;
     }
-    pymsg = PyObject_CallFunction(errmsg_fn, "(zOn)", msg, s, end);
-    if (pymsg) {
-        PyErr_SetObject(PyExc_ValueError, pymsg);
-        Py_DECREF(pymsg);
+    exc = PyObject_CallFunction(JSONDecodeError, "(zOn)", msg, s, end);
+    if (exc) {
+        PyErr_SetObject(JSONDecodeError, exc);
+        Py_DECREF(exc);
     }
 }
 
@@ -287,7 +384,7 @@ _build_rval_index_tuple(PyObject *rval, Py_ssize_t idx) {
             } \
         } \
         if (PyList_Append(chunks, chunk)) { \
-            Py_DECREF(chunk); \
+            Py_CLEAR(chunk); \
             goto bail; \
         } \
         Py_CLEAR(chunk); \
@@ -530,6 +627,31 @@ py_encode_basestring_ascii(PyObject* self UNUSED, PyObject *pystr)
     return rval;
 }
 
+
+PyDoc_STRVAR(pydoc_encode_basestring,
+    "encode_basestring(string) -> string\n"
+    "\n"
+    "Return a JSON representation of a Python string"
+);
+
+static PyObject *
+py_encode_basestring(PyObject* self UNUSED, PyObject *pystr)
+{
+    PyObject *rval;
+    /* Return a JSON representation of a Python string */
+    /* METH_O */
+    if (PyUnicode_Check(pystr)) {
+        rval = escape_unicode(pystr);
+    }
+    else {
+        PyErr_Format(PyExc_TypeError,
+                     "first argument must be a string, not %.80s",
+                     Py_TYPE(pystr)->tp_name);
+        return NULL;
+    }
+    return rval;
+}
+
 static void
 scanner_dealloc(PyObject *self)
 {
@@ -705,7 +827,7 @@ bail:
 
 static PyObject *
 _parse_array_unicode(PyScannerObject *s, PyObject *pystr, Py_ssize_t idx, Py_ssize_t *next_idx_ptr) {
-    /* Read a JSON array from PyString pystr.
+    /* Read a JSON array from PyUnicode pystr.
     idx is the index of the first character after the opening brace.
     *next_idx_ptr is a return-by-reference index to the first character after
         the closing brace.
@@ -777,8 +899,8 @@ bail:
 }
 
 static PyObject *
-_parse_constant(PyScannerObject *s, char *constant, Py_ssize_t idx, Py_ssize_t *next_idx_ptr) {
-    /* Read a JSON constant from PyString pystr.
+_parse_constant(PyScannerObject *s, const char *constant, Py_ssize_t idx, Py_ssize_t *next_idx_ptr) {
+    /* Read a JSON constant.
     constant is the constant string that was found
         ("NaN", "Infinity", "-Infinity").
     idx is the index of the first character of the constant
@@ -810,7 +932,7 @@ _match_number_unicode(PyScannerObject *s, PyObject *pystr, Py_ssize_t start, Py_
         the number.
 
     Returns a new PyObject representation of that number:
-        PyInt, PyLong, or PyFloat.
+        PyLong, or PyFloat.
         May return other types if parse_int or parse_float are set
     */
     void *str;
@@ -941,6 +1063,10 @@ scan_once_unicode(PyScannerObject *s, PyObject *pystr, Py_ssize_t idx, Py_ssize_
     kind = PyUnicode_KIND(pystr);
     length = PyUnicode_GET_LENGTH(pystr);
 
+    if (idx < 0) {
+        PyErr_SetString(PyExc_ValueError, "idx cannot be negative");
+        return NULL;
+    }
     if (idx >= length) {
         raise_stop_iteration(idx);
         return NULL;
@@ -1219,7 +1345,14 @@ encoder_init(PyObject *self, PyObject *args, PyObject *kwds)
     s->item_separator = item_separator;
     s->sort_keys = sort_keys;
     s->skipkeys = skipkeys;
-    s->fast_encode = (PyCFunction_Check(s->encoder) && PyCFunction_GetFunction(s->encoder) == (PyCFunction)py_encode_basestring_ascii);
+    s->fast_encode = NULL;
+    if (PyCFunction_Check(s->encoder)) {
+        PyCFunction f = PyCFunction_GetFunction(s->encoder);
+        if (f == (PyCFunction)py_encode_basestring_ascii ||
+                f == (PyCFunction)py_encode_basestring) {
+            s->fast_encode = f;
+        }
+    }
     s->allow_nan = PyObject_IsTrue(allow_nan);
 
     Py_INCREF(s->markers);
@@ -1368,7 +1501,7 @@ encoder_encode_string(PyEncoderObject *s, PyObject *obj)
 {
     /* Return the JSON representation of a string */
     if (s->fast_encode)
-        return py_encode_basestring_ascii(NULL, obj);
+        return s->fast_encode(NULL, obj);
     else
         return PyObject_CallFunctionObjArgs(s->encoder, obj, NULL);
 }
@@ -1551,6 +1684,7 @@ encoder_listencode_dict(PyEncoderObject *s, _PyAccu *acc,
             if (item == NULL)
                 goto bail;
             PyList_SET_ITEM(items, i, item);
+            item = NULL;
             Py_DECREF(key);
         }
     }
@@ -1835,6 +1969,10 @@ static PyMethodDef speedups_methods[] = {
         (PyCFunction)py_encode_basestring_ascii,
         METH_O,
         pydoc_encode_basestring_ascii},
+    {"encode_basestring",
+        (PyCFunction)py_encode_basestring,
+        METH_O,
+        pydoc_encode_basestring},
     {"scanstring",
         (PyCFunction)py_scanstring,
         METH_VARARGS,
@@ -1857,7 +1995,7 @@ static struct PyModuleDef jsonmodule = {
         NULL
 };
 
-PyObject*
+PyMODINIT_FUNC
 PyInit__json(void)
 {
     PyObject *m = PyModule_Create(&jsonmodule);

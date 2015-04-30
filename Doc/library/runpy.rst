@@ -28,6 +28,9 @@ The :mod:`runpy` module provides two functions:
 
 .. function:: run_module(mod_name, init_globals=None, run_name=None, alter_sys=False)
 
+   .. index::
+      module: __main__
+
    Execute the code of the specified module and return the resulting module
    globals dictionary. The module's code is first located using the standard
    import mechanism (refer to :pep:`302` for details) and then executed in a
@@ -72,6 +75,9 @@ The :mod:`runpy` module provides two functions:
    arguments. It is recommended that the :mod:`sys` module be left alone when
    invoking this function from threaded code.
 
+   .. seealso::
+      The :option:`-m` option offering equivalent functionality from the
+      command line.
 
    .. versionchanged:: 3.1
       Added ability to execute packages by looking for a ``__main__`` submodule.
@@ -86,6 +92,9 @@ The :mod:`runpy` module provides two functions:
       accessible as ``__spec__.name``.
 
 .. function:: run_path(file_path, init_globals=None, run_name=None)
+
+   .. index::
+      module: __main__
 
    Execute the code at the named filesystem location and return the resulting
    module globals dictionary. As with a script name supplied to the CPython
@@ -121,9 +130,6 @@ The :mod:`runpy` module provides two functions:
    supplied path, and ``__spec__``, ``__cached__``, ``__loader__`` and
    ``__package__`` will all be set to :const:`None`.
 
-   ``__spec__`` will be set to :const:`None` if the supplied path is a
-   direct path to a script (as source or as precompiled bytecode).
-
    If the supplied path is a reference to a valid sys.path entry, then
    ``__spec__`` will be set appropriately for the imported ``__main__``
    module (that is, ``__spec__.name`` will always be ``__main__``).
@@ -143,6 +149,10 @@ The :mod:`runpy` module provides two functions:
    limitations still apply, use of this function in threaded code should be
    either serialised with the import lock or delegated to a separate process.
 
+   .. seealso::
+      :ref:`using-on-interface-options` for equivalent functionality on the
+      command line (``python path/to/script``).
+
    .. versionadded:: 3.2
 
    .. versionchanged:: 3.4
@@ -153,13 +163,13 @@ The :mod:`runpy` module provides two functions:
 
 .. seealso::
 
-   :pep:`338` - Executing modules as scripts
+   :pep:`338` -- Executing modules as scripts
       PEP written and implemented by Nick Coghlan.
 
-   :pep:`366` - Main module explicit relative imports
+   :pep:`366` -- Main module explicit relative imports
       PEP written and implemented by Nick Coghlan.
 
-   :pep:`451` - A ModuleSpec Type for the Import System
+   :pep:`451` -- A ModuleSpec Type for the Import System
       PEP written and implemented by Eric Snow
 
    :ref:`using-on-general` - CPython command line details

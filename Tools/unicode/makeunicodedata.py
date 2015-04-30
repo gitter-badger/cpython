@@ -37,7 +37,12 @@ SCRIPT = sys.argv[0]
 VERSION = "3.2"
 
 # The Unicode Database
-UNIDATA_VERSION = "6.3.0"
+# --------------------
+# When changing UCD version please update
+#   * Doc/library/stdtypes.rst, and
+#   * Doc/library/unicodedata.rst
+#   * Doc/reference/lexical_analysis.rst (two occurrences)
+UNIDATA_VERSION = "7.0.0"
 UNICODE_DATA = "UnicodeData%s.txt"
 COMPOSITION_EXCLUSIONS = "CompositionExclusions%s.txt"
 EASTASIAN_WIDTH = "EastAsianWidth%s.txt"

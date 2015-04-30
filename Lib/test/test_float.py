@@ -1,12 +1,16 @@
 
-import unittest, struct
-import os
-import sys
-from test import support
+import fractions
 import math
-from math import isinf, isnan, copysign, ldexp
 import operator
-import random, fractions
+import os
+import random
+import sys
+import struct
+import time
+import unittest
+
+from test import support
+from math import isinf, isnan, copysign, ldexp
 
 INF = float("inf")
 NAN = float("nan")
@@ -93,10 +97,6 @@ class GeneralFloatCases(unittest.TestCase):
 
     def test_floatconversion(self):
         # Make sure that calls to __float__() work properly
-        class Foo0:
-            def __float__(self):
-                return 42.
-
         class Foo1(object):
             def __float__(self):
                 return 42.
@@ -122,12 +122,16 @@ class GeneralFloatCases(unittest.TestCase):
             def __float__(self):
                 return float(str(self)) + 1
 
-        self.assertAlmostEqual(float(Foo0()), 42.)
         self.assertAlmostEqual(float(Foo1()), 42.)
         self.assertAlmostEqual(float(Foo2()), 42.)
         self.assertAlmostEqual(float(Foo3(21)), 42.)
         self.assertRaises(TypeError, float, Foo4(42))
         self.assertAlmostEqual(float(FooStr('8')), 9.)
+
+        class Foo5:
+            def __float__(self):
+                return ""
+        self.assertRaises(TypeError, time.sleep, Foo5())
 
     def test_is_integer(self):
         self.assertFalse((1.1).is_integer())
@@ -769,6 +773,14 @@ class RoundTestCase(unittest.TestCase):
             test(sfmt, NAN, ' nan')
             test(sfmt, -NAN, ' nan')
 
+    def test_None_ndigits(self):
+        for x in round(1.23), round(1.23, None), round(1.23, ndigits=None):
+            self.assertEqual(x, 1)
+            self.assertIsInstance(x, int)
+        for x in round(1.78), round(1.78, None), round(1.78, ndigits=None):
+            self.assertEqual(x, 2)
+            self.assertIsInstance(x, int)
+
 
 # Beginning with Python 2.6 float has cross platform compatible
 # ways to create and represent inf and nan
@@ -1295,18 +1307,5 @@ class HexFloatTestCase(unittest.TestCase):
                 self.identical(x, fromHex(toHex(x)))
 
 
-def test_main():
-    support.run_unittest(
-        GeneralFloatCases,
-        FormatFunctionsTestCase,
-        UnknownFormatTestCase,
-        IEEEFormatTestCase,
-        FormatTestCase,
-        ReprTestCase,
-        RoundTestCase,
-        InfNanTest,
-        HexFloatTestCase,
-        )
-
 if __name__ == '__main__':
-    test_main()
+    unittest.main()

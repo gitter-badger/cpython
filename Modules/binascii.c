@@ -56,6 +56,7 @@
 #define PY_SSIZE_T_CLEAN
 
 #include "Python.h"
+#include "pystrhex.h"
 #ifdef USE_ZLIB_CRC32
 #include "zlib.h"
 #endif
@@ -184,10 +185,9 @@ static unsigned short crctab_hqx[256] = {
 };
 
 /*[clinic input]
-output preset file
 module binascii
 [clinic start generated code]*/
-/*[clinic end generated code: output=da39a3ee5e6b4b0d input=44c6f840ce708f0c]*/
+/*[clinic end generated code: output=da39a3ee5e6b4b0d input=de89fb46bcaf3fec]*/
 
 /*[python input]
 
@@ -228,13 +228,13 @@ ascii_buffer_converter(PyObject *arg, Py_buffer *buf)
     if (PyObject_GetBuffer(arg, buf, PyBUF_SIMPLE) != 0) {
         PyErr_Format(PyExc_TypeError,
                      "argument should be bytes, buffer or ASCII string, "
-                     "not %R", Py_TYPE(arg));
+                     "not '%.100s'", Py_TYPE(arg)->tp_name);
         return 0;
     }
     if (!PyBuffer_IsContiguous(buf, 'C')) {
         PyErr_Format(PyExc_TypeError,
                      "argument should be a contiguous buffer, "
-                     "not %R", Py_TYPE(arg));
+                     "not '%.100s'", Py_TYPE(arg)->tp_name);
         PyBuffer_Release(buf);
         return 0;
     }
@@ -909,31 +909,31 @@ binascii_rledecode_hqx_impl(PyModuleDef *module, Py_buffer *data)
 
 
 /*[clinic input]
-binascii.crc_hqx -> int
+binascii.crc_hqx -> unsigned_int
 
     data: Py_buffer
-    crc: int
+    crc: unsigned_int(bitwise=True)
     /
 
 Compute hqx CRC incrementally.
 [clinic start generated code]*/
 
-static int
-binascii_crc_hqx_impl(PyModuleDef *module, Py_buffer *data, int crc)
-/*[clinic end generated code: output=634dac18dfa863d7 input=68060931b2f51c8a]*/
+static unsigned int
+binascii_crc_hqx_impl(PyModuleDef *module, Py_buffer *data, unsigned int crc)
+/*[clinic end generated code: output=167c2dac62625717 input=add8c53712ccceda]*/
 {
     unsigned char *bin_data;
-    unsigned int ucrc = (unsigned int)crc;
     Py_ssize_t len;
 
+    crc &= 0xffff;
     bin_data = data->buf;
     len = data->len;
 
     while(len-- > 0) {
-        ucrc=((ucrc<<8)&0xff00)^crctab_hqx[((ucrc>>8)&0xff)^*bin_data++];
+        crc = ((crc<<8)&0xff00) ^ crctab_hqx[(crc>>8)^*bin_data++];
     }
 
-    return (int)ucrc;
+    return crc;
 }
 
 #ifndef USE_ZLIB_CRC32
@@ -1118,35 +1118,23 @@ static PyObject *
 binascii_b2a_hex_impl(PyModuleDef *module, Py_buffer *data)
 /*[clinic end generated code: output=179318922c2f8fda input=96423cfa299ff3b1]*/
 {
-    char* argbuf;
-    Py_ssize_t arglen;
-    PyObject *retval;
-    char* retbuf;
-    Py_ssize_t i, j;
-
-    argbuf = data->buf;
-    arglen = data->len;
-
-    assert(arglen >= 0);
-    if (arglen > PY_SSIZE_T_MAX / 2)
-        return PyErr_NoMemory();
-
-    retval = PyBytes_FromStringAndSize(NULL, arglen*2);
-    if (!retval)
-        return NULL;
-    retbuf = PyBytes_AS_STRING(retval);
-
-    /* make hex version of string, taken from shamodule.c */
-    for (i=j=0; i < arglen; i++) {
-        unsigned char c;
-        c = (argbuf[i] >> 4) & 0xf;
-        retbuf[j++] = Py_hexdigits[c];
-        c = argbuf[i] & 0xf;
-        retbuf[j++] = Py_hexdigits[c];
-    }
-    return retval;
+    return _Py_strhex_bytes((const char *)data->buf, data->len);
 }
 
+/*[clinic input]
+binascii.hexlify = binascii.b2a_hex
+
+Hexadecimal representation of binary data.
+
+The return value is a bytes object.
+[clinic start generated code]*/
+
+static PyObject *
+binascii_hexlify_impl(PyModuleDef *module, Py_buffer *data)
+/*[clinic end generated code: output=6098440091fb61dc input=2e3afae7f083f061]*/
+{
+    return _Py_strhex_bytes((const char *)data->buf, data->len);
+}
 
 static int
 to_int(int c)
@@ -1219,6 +1207,21 @@ binascii_a2b_hex_impl(PyModuleDef *module, Py_buffer *hexstr)
   finally:
     Py_DECREF(retval);
     return NULL;
+}
+
+/*[clinic input]
+binascii.unhexlify = binascii.a2b_hex
+
+Binary data of hexadecimal representation.
+
+hexstr must contain an even number of hex digits (upper or lower case).
+[clinic start generated code]*/
+
+static PyObject *
+binascii_unhexlify_impl(PyModuleDef *module, Py_buffer *hexstr)
+/*[clinic end generated code: output=17cec7544499803e input=dd8c012725f462da]*/
+{
+    return binascii_a2b_hex_impl(module, hexstr);
 }
 
 static int table_hex[128] = {
@@ -1353,8 +1356,9 @@ are both encoded.  When quotetabs is set, space and tabs are encoded.
 [clinic start generated code]*/
 
 static PyObject *
-binascii_b2a_qp_impl(PyModuleDef *module, Py_buffer *data, int quotetabs, int istext, int header)
-/*[clinic end generated code: output=ff2991ba640fff3e input=7f2a9aaa008e92b2]*/
+binascii_b2a_qp_impl(PyModuleDef *module, Py_buffer *data, int quotetabs,
+                     int istext, int header)
+/*[clinic end generated code: output=a87ca9ccb94e2a9f input=7f2a9aaa008e92b2]*/
 {
     Py_ssize_t in, out;
     unsigned char *databuf, *odata;
@@ -1535,10 +1539,8 @@ static struct PyMethodDef binascii_module_methods[] = {
     BINASCII_B2A_HQX_METHODDEF
     BINASCII_A2B_HEX_METHODDEF
     BINASCII_B2A_HEX_METHODDEF
-    {"unhexlify", (PyCFunction)binascii_a2b_hex, METH_VARARGS,
-        binascii_a2b_hex__doc__},
-    {"hexlify", (PyCFunction)binascii_b2a_hex, METH_VARARGS,
-        binascii_b2a_hex__doc__},
+    BINASCII_HEXLIFY_METHODDEF
+    BINASCII_UNHEXLIFY_METHODDEF
     BINASCII_RLECODE_HQX_METHODDEF
     BINASCII_RLEDECODE_HQX_METHODDEF
     BINASCII_CRC_HQX_METHODDEF

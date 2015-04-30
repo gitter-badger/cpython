@@ -98,6 +98,7 @@ const char *_PyParser_TokenNames[] = {
     "DOUBLESLASH",
     "DOUBLESLASHEQUAL",
     "AT",
+    "ATEQUAL",
     "RARROW",
     "ELLIPSIS",
     /* This table must match the #defines in token.h! */
@@ -1131,7 +1132,7 @@ PyToken_OneChar(int c)
     case '}':           return RBRACE;
     case '^':           return CIRCUMFLEX;
     case '~':           return TILDE;
-    case '@':       return AT;
+    case '@':           return AT;
     default:            return OP;
     }
 }
@@ -1205,6 +1206,11 @@ PyToken_TwoChars(int c1, int c2)
     case '^':
         switch (c2) {
         case '=':               return CIRCUMFLEXEQUAL;
+        }
+        break;
+    case '@':
+        switch (c2) {
+        case '=':               return ATEQUAL;
         }
         break;
     }
@@ -1301,6 +1307,8 @@ verify_identifier(struct tok_state *tok)
 {
     PyObject *s;
     int result;
+    if (tok->decoding_erred)
+        return 0;
     s = PyUnicode_DecodeUTF8(tok->start, tok->cur - tok->start, NULL);
     if (s == NULL || PyUnicode_READY(s) == -1) {
         if (PyErr_ExceptionMatches(PyExc_UnicodeDecodeError)) {
@@ -1469,11 +1477,8 @@ tok_get(struct tok_state *tok, char **p_start, char **p_end)
             c = tok_nextc(tok);
         }
         tok_backup(tok, c);
-        if (nonascii &&
-            !verify_identifier(tok)) {
-            tok->done = E_IDENTIFIER;
+        if (nonascii && !verify_identifier(tok))
             return ERRORTOKEN;
-        }
         *p_start = tok->start;
         *p_end = tok->cur;
         return NAME;
@@ -1597,15 +1602,24 @@ tok_get(struct tok_state *tok, char **p_start, char **p_end)
                     } while (isdigit(c));
                 }
                 if (c == 'e' || c == 'E') {
-        exponent:
+                    int e;
+                  exponent:
+                    e = c;
                     /* Exponent part */
                     c = tok_nextc(tok);
-                    if (c == '+' || c == '-')
+                    if (c == '+' || c == '-') {
                         c = tok_nextc(tok);
-                    if (!isdigit(c)) {
-                        tok->done = E_TOKEN;
+                        if (!isdigit(c)) {
+                            tok->done = E_TOKEN;
+                            tok_backup(tok, c);
+                            return ERRORTOKEN;
+                        }
+                    } else if (!isdigit(c)) {
                         tok_backup(tok, c);
-                        return ERRORTOKEN;
+                        tok_backup(tok, e);
+                        *p_start = tok->start;
+                        *p_end = tok->cur;
+                        return NUMBER;
                     }
                     do {
                         c = tok_nextc(tok);

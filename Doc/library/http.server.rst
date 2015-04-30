@@ -64,6 +64,18 @@ of which this module provides three different variants:
 
       Contains the server instance.
 
+   .. attribute:: close_connection
+
+      Boolean that should be set before :meth:`handle_one_request` returns,
+      indicating if another request may be expected, or if the connection should
+      be shut down.
+
+   .. attribute:: requestline
+
+      Contains the string representation of the HTTP request line. The
+      terminating CRLF is stripped. This attribute should be set by
+      :meth:`handle_one_request`. If no valid request line was processed, it
+      should be set to the empty string.
 
    .. attribute:: command
 
@@ -81,7 +93,10 @@ of which this module provides three different variants:
 
       Holds an instance of the class specified by the :attr:`MessageClass` class
       variable. This instance parses and manages the headers in the HTTP
-      request.
+      request. The :func:`~http.client.parse_headers` function from
+      :mod:`http.client` is used to parse the headers and it requires that the
+      HTTP request provide a valid :rfc:`2822` style header.
+
 
    .. attribute:: rfile
 
@@ -217,7 +232,7 @@ of which this module provides three different variants:
 
    .. method:: send_response_only(code, message=None)
 
-      Sends the reponse header only, used for the purposes when ``100
+      Sends the response header only, used for the purposes when ``100
       Continue`` response is sent by the server to the client. The headers not
       buffered and sent directly the output stream.If the *message* is not
       specified, the HTTP message corresponding the response *code*  is sent.

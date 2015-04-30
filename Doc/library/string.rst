@@ -95,6 +95,10 @@ implementation as the built-in :meth:`format` method.
       an arbitrary set of positional and keyword arguments.
       :meth:`format` is just a wrapper that calls :meth:`vformat`.
 
+      .. deprecated:: 3.5
+         Passing a format string as keyword argument *format_string* has been
+         deprecated.
+
    .. method:: vformat(format_string, args, kwargs)
 
       This function does the actual work of formatting.  It is exposed as a
@@ -478,10 +482,12 @@ The available presentation types for floating point and decimal values are:
    | ``'%'`` | Percentage. Multiplies the number by 100 and displays    |
    |         | in fixed (``'f'``) format, followed by a percent sign.   |
    +---------+----------------------------------------------------------+
-   | None    | Similar to ``'g'``, except with at least one digit past  |
-   |         | the decimal point and a default precision of 12. This is |
-   |         | intended to match :func:`str`, except you can add the    |
-   |         | other format modifiers.                                  |
+   | None    | Similar to ``'g'``, except that fixed-point notation,    |
+   |         | when used, has at least one digit past the decimal point.|
+   |         | The default precision is as high as needed to represent  |
+   |         | the particular value. The overall effect is to match the |
+   |         | output of :func:`str` as altered by the other format     |
+   |         | modifiers.                                               |
    +---------+----------------------------------------------------------+
 
 

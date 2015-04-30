@@ -65,9 +65,11 @@ ppc_getcounter(uint64 *v)
    even in 64-bit mode, we need to use "a" and "d" for the lower and upper
    32-bit pieces of the result. */
 
-#define READ_TIMESTAMP(val) \
-    __asm__ __volatile__("rdtsc" : \
-                         "=a" (((int*)&(val))[0]), "=d" (((int*)&(val))[1]));
+#define READ_TIMESTAMP(val) do {                        \
+    unsigned int h, l;                                  \
+    __asm__ __volatile__("rdtsc" : "=a" (l), "=d" (h)); \
+    (val) = ((uint64)l) | (((uint64)h) << 32);          \
+    } while(0)
 
 
 #else
@@ -1187,8 +1189,8 @@ PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
     f->f_stacktop = NULL;       /* remains NULL unless yield suspends frame */
     f->f_executing = 1;
 
-    if (co->co_flags & CO_GENERATOR && !throwflag) {
-        if (f->f_exc_type != NULL && f->f_exc_type != Py_None) {
+    if (co->co_flags & CO_GENERATOR) {
+        if (!throwflag && f->f_exc_type != NULL && f->f_exc_type != Py_None) {
             /* We were in an except handler when we left,
                restore the exception state which was put aside
                (see YIELD_VALUE). */
@@ -1267,6 +1269,13 @@ PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
                 /* Other threads may run now */
 
                 take_gil(tstate);
+
+                /* Check if we should make a quick exit. */
+                if (_Py_Finalizing && _Py_Finalizing != tstate) {
+                    drop_gil(tstate);
+                    PyThread_exit_thread();
+                }
+
                 if (PyThreadState_Swap(tstate) != NULL)
                     Py_FatalError("ceval: orphan tstate");
             }
@@ -1495,6 +1504,18 @@ PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
             DISPATCH();
         }
 
+        TARGET(BINARY_MATRIX_MULTIPLY) {
+            PyObject *right = POP();
+            PyObject *left = TOP();
+            PyObject *res = PyNumber_MatrixMultiply(left, right);
+            Py_DECREF(left);
+            Py_DECREF(right);
+            SET_TOP(res);
+            if (res == NULL)
+                goto error;
+            DISPATCH();
+        }
+
         TARGET(BINARY_TRUE_DIVIDE) {
             PyObject *divisor = POP();
             PyObject *dividend = TOP();
@@ -1677,6 +1698,18 @@ PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
             PyObject *right = POP();
             PyObject *left = TOP();
             PyObject *res = PyNumber_InPlaceMultiply(left, right);
+            Py_DECREF(left);
+            Py_DECREF(right);
+            SET_TOP(res);
+            if (res == NULL)
+                goto error;
+            DISPATCH();
+        }
+
+        TARGET(INPLACE_MATRIX_MULTIPLY) {
+            PyObject *right = POP();
+            PyObject *left = TOP();
+            PyObject *res = PyNumber_InPlaceMatrixMultiply(left, right);
             Py_DECREF(left);
             Py_DECREF(right);
             SET_TOP(res);
@@ -1902,7 +1935,7 @@ PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
                 if (v == Py_None)
                     retval = Py_TYPE(reciever)->tp_iternext(reciever);
                 else
-                    retval = _PyObject_CallMethodId(reciever, &PyId_send, "O", v);
+                    retval = _PyObject_CallMethodIdObjArgs(reciever, &PyId_send, v, NULL);
             }
             Py_DECREF(v);
             if (retval == NULL) {
@@ -3159,11 +3192,11 @@ fast_block_end:
     if (why != WHY_RETURN)
         retval = NULL;
 
-    assert((retval != NULL && !PyErr_Occurred())
-            || (retval == NULL && PyErr_Occurred()));
+    assert((retval != NULL) ^ (PyErr_Occurred() != NULL));
 
 fast_yield:
-    if (co->co_flags & CO_GENERATOR && (why == WHY_YIELD || why == WHY_RETURN)) {
+    if (co->co_flags & CO_GENERATOR) {
+
         /* The purpose of this block is to put aside the generator's exception
            state and restore that of the calling frame. If the current
            exception state is from the caller, we clear the exception values
@@ -3220,7 +3253,7 @@ exit_eval_frame:
     f->f_executing = 0;
     tstate->frame = f->f_back;
 
-    return retval;
+    return _Py_CheckFunctionResult(NULL, retval, "PyEval_EvalFrameEx");
 }
 
 static void
@@ -3377,10 +3410,11 @@ too_many_positional(PyCodeObject *co, int given, int defcount, PyObject **fastlo
    PyEval_EvalFrame() and PyEval_EvalCodeEx() you will need to adjust
    the test in the if statements in Misc/gdbinit (pystack and pystackv). */
 
-PyObject *
-PyEval_EvalCodeEx(PyObject *_co, PyObject *globals, PyObject *locals,
+static PyObject *
+_PyEval_EvalCodeWithName(PyObject *_co, PyObject *globals, PyObject *locals,
            PyObject **args, int argcount, PyObject **kws, int kwcount,
-           PyObject **defs, int defcount, PyObject *kwdefs, PyObject *closure)
+           PyObject **defs, int defcount, PyObject *kwdefs, PyObject *closure,
+           PyObject *name, PyObject *qualname)
 {
     PyCodeObject* co = (PyCodeObject*)_co;
     PyFrameObject *f;
@@ -3572,7 +3606,7 @@ PyEval_EvalCodeEx(PyObject *_co, PyObject *globals, PyObject *locals,
 
         /* Create a new generator that owns the ready to run frame
          * and return that as the value. */
-        return PyGen_New(f);
+        return PyGen_NewWithQualName(f, name, qualname);
     }
 
     retval = PyEval_EvalFrameEx(f,0);
@@ -3591,6 +3625,16 @@ fail: /* Jump here from prelude on failure */
     return retval;
 }
 
+PyObject *
+PyEval_EvalCodeEx(PyObject *_co, PyObject *globals, PyObject *locals,
+           PyObject **args, int argcount, PyObject **kws, int kwcount,
+           PyObject **defs, int defcount, PyObject *kwdefs, PyObject *closure)
+{
+    return _PyEval_EvalCodeWithName(_co, globals, locals,
+                                    args, argcount, kws, kwcount,
+                                    defs, defcount, kwdefs, closure,
+                                    NULL, NULL);
+}
 
 static PyObject *
 special_lookup(PyObject *o, _Py_Identifier *id)
@@ -3781,9 +3825,17 @@ unpack_iterable(PyObject *v, int argcnt, int argcntafter, PyObject **sp)
         if (w == NULL) {
             /* Iterator done, via error or exhaustion. */
             if (!PyErr_Occurred()) {
-                PyErr_Format(PyExc_ValueError,
-                    "need more than %d value%s to unpack",
-                    i, i == 1 ? "" : "s");
+                if (argcntafter == -1) {
+                    PyErr_Format(PyExc_ValueError,
+                        "not enough values to unpack (expected %d, got %d)",
+                        argcnt, i);
+                }
+                else {
+                    PyErr_Format(PyExc_ValueError,
+                        "not enough values to unpack "
+                        "(expected at least %d, got %d)",
+                        argcnt + argcntafter, i);
+                }
             }
             goto Error;
         }
@@ -3800,8 +3852,9 @@ unpack_iterable(PyObject *v, int argcnt, int argcntafter, PyObject **sp)
             return 1;
         }
         Py_DECREF(w);
-        PyErr_Format(PyExc_ValueError, "too many values to unpack "
-                     "(expected %d)", argcnt);
+        PyErr_Format(PyExc_ValueError,
+            "too many values to unpack (expected %d)",
+            argcnt);
         goto Error;
     }
 
@@ -3813,8 +3866,9 @@ unpack_iterable(PyObject *v, int argcnt, int argcntafter, PyObject **sp)
 
     ll = PyList_GET_SIZE(l);
     if (ll < argcntafter) {
-        PyErr_Format(PyExc_ValueError, "need more than %zd values to unpack",
-                     argcnt + ll);
+        PyErr_Format(PyExc_ValueError,
+            "not enough values to unpack (expected at least %d, got %zd)",
+            argcnt + argcntafter, argcnt + ll);
         goto Error;
     }
 
@@ -4076,8 +4130,8 @@ PyEval_CallObjectWithKeywords(PyObject *func, PyObject *arg, PyObject *kw)
 
 #ifdef Py_DEBUG
     /* PyEval_CallObjectWithKeywords() must not be called with an exception
-       set, because it may clear it (directly or indirectly)
-       and so the caller looses its exception */
+       set. It raises a new exception if parameters are invalid or if
+       PyTuple_New() fails, and so the original exception is lost. */
     assert(!PyErr_Occurred());
 #endif
 
@@ -4104,8 +4158,6 @@ PyEval_CallObjectWithKeywords(PyObject *func, PyObject *arg, PyObject *kw)
     result = PyObject_Call(func, arg, kw);
     Py_DECREF(arg);
 
-    assert((result != NULL && !PyErr_Occurred())
-           || (result == NULL && PyErr_Occurred()));
     return result;
 }
 
@@ -4208,11 +4260,15 @@ call_function(PyObject ***pp_stack, int oparg
             PyObject *self = PyCFunction_GET_SELF(func);
             if (flags & METH_NOARGS && na == 0) {
                 C_TRACE(x, (*meth)(self,NULL));
+
+                x = _Py_CheckFunctionResult(func, x, NULL);
             }
             else if (flags & METH_O && na == 1) {
                 PyObject *arg = EXT_POP(*pp_stack);
                 C_TRACE(x, (*meth)(self,arg));
                 Py_DECREF(arg);
+
+                x = _Py_CheckFunctionResult(func, x, NULL);
             }
             else {
                 err_args(func, flags, na);
@@ -4232,7 +4288,8 @@ call_function(PyObject ***pp_stack, int oparg
                 x = NULL;
             }
         }
-    } else {
+    }
+    else {
         if (PyMethod_Check(func) && PyMethod_GET_SELF(func) != NULL) {
             /* optimize access to bound methods */
             PyObject *self = PyMethod_GET_SELF(func);
@@ -4254,9 +4311,9 @@ call_function(PyObject ***pp_stack, int oparg
             x = do_call(func, pp_stack, na, nk);
         READ_TIMESTAMP(*pintr1);
         Py_DECREF(func);
+
+        assert((x != NULL) ^ (PyErr_Occurred() != NULL));
     }
-    assert((x != NULL && !PyErr_Occurred())
-           || (x == NULL && PyErr_Occurred()));
 
     /* Clear the stack of the function object.  Also removes
        the arguments in case they weren't consumed already
@@ -4268,8 +4325,7 @@ call_function(PyObject ***pp_stack, int oparg
         PCALL(PCALL_POP);
     }
 
-    assert((x != NULL && !PyErr_Occurred())
-           || (x == NULL && PyErr_Occurred()));
+    assert((x != NULL) ^ (PyErr_Occurred() != NULL));
     return x;
 }
 
@@ -4289,6 +4345,8 @@ fast_function(PyObject *func, PyObject ***pp_stack, int n, int na, int nk)
     PyObject *globals = PyFunction_GET_GLOBALS(func);
     PyObject *argdefs = PyFunction_GET_DEFAULTS(func);
     PyObject *kwdefs = PyFunction_GET_KW_DEFAULTS(func);
+    PyObject *name = ((PyFunctionObject *)func) -> func_name;
+    PyObject *qualname = ((PyFunctionObject *)func) -> func_qualname;
     PyObject **d = NULL;
     int nd = 0;
 
@@ -4331,10 +4389,11 @@ fast_function(PyObject *func, PyObject ***pp_stack, int n, int na, int nk)
         d = &PyTuple_GET_ITEM(argdefs, 0);
         nd = Py_SIZE(argdefs);
     }
-    return PyEval_EvalCodeEx((PyObject*)co, globals,
-                             (PyObject *)NULL, (*pp_stack)-n, na,
-                             (*pp_stack)-2*nk, nk, d, nd, kwdefs,
-                             PyFunction_GET_CLOSURE(func));
+    return _PyEval_EvalCodeWithName((PyObject*)co, globals,
+                                    (PyObject *)NULL, (*pp_stack)-n, na,
+                                    (*pp_stack)-2*nk, nk, d, nd, kwdefs,
+                                    PyFunction_GET_CLOSURE(func),
+                                    name, qualname);
 }
 
 static PyObject *
@@ -4553,12 +4612,10 @@ ext_call_fail:
     Py_XDECREF(callargs);
     Py_XDECREF(kwdict);
     Py_XDECREF(stararg);
-    assert((result != NULL && !PyErr_Occurred())
-           || (result == NULL && PyErr_Occurred()));
     return result;
 }
 
-/* Extract a slice index from a PyInt or PyLong or an object with the
+/* Extract a slice index from a PyLong or an object with the
    nb_index slot defined, and store in *pi.
    Silently reduce values larger than PY_SSIZE_T_MAX to PY_SSIZE_T_MAX,
    and silently boost values less than -PY_SSIZE_T_MAX-1 to -PY_SSIZE_T_MAX-1.
@@ -4648,11 +4705,29 @@ static PyObject *
 import_from(PyObject *v, PyObject *name)
 {
     PyObject *x;
+    _Py_IDENTIFIER(__name__);
+    PyObject *fullmodname, *pkgname;
 
     x = PyObject_GetAttr(v, name);
-    if (x == NULL && PyErr_ExceptionMatches(PyExc_AttributeError)) {
+    if (x != NULL || !PyErr_ExceptionMatches(PyExc_AttributeError))
+        return x;
+    /* Issue #17636: in case this failed because of a circular relative
+       import, try to fallback on reading the module directly from
+       sys.modules. */
+    PyErr_Clear();
+    pkgname = _PyObject_GetAttrId(v, &PyId___name__);
+    if (pkgname == NULL)
+        return NULL;
+    fullmodname = PyUnicode_FromFormat("%U.%U", pkgname, name);
+    Py_DECREF(pkgname);
+    if (fullmodname == NULL)
+        return NULL;
+    x = PyDict_GetItem(PyImport_GetModuleDict(), fullmodname);
+    if (x == NULL)
         PyErr_Format(PyExc_ImportError, "cannot import name %R", name);
-    }
+    else
+        Py_INCREF(x);
+    Py_DECREF(fullmodname);
     return x;
 }
 

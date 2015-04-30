@@ -39,7 +39,7 @@ def _run_object_doctest(obj, module):
     # Use the object's fully qualified name if it has one
     # Otherwise, use the module's name
     try:
-        name = "%s.%s" % (obj.__module__, obj.__name__)
+        name = "%s.%s" % (obj.__module__, obj.__qualname__)
     except AttributeError:
         name = module.__name__
     for example in finder.find(obj, name, module):
@@ -57,7 +57,7 @@ class ZipSupportTests(unittest.TestCase):
     # This used to use the ImportHooksBaseTestCase to restore
     # the state of the import related information
     # in the sys module after each test. However, that restores
-    # *too much* information and breaks for the invocation of
+    # *too much* information and breaks for the invocation
     # of test_doctest. So we do our own thing and leave
     # sys.modules alone.
     # We also clear the linecache and zipimport cache
@@ -238,9 +238,8 @@ class ZipSupportTests(unittest.TestCase):
             self.assertIn(os.path.normcase(run_name.encode('utf-8')), data)
 
 
-def test_main():
-    test.support.run_unittest(ZipSupportTests)
+def tearDownModule():
     test.support.reap_children()
 
 if __name__ == '__main__':
-    test_main()
+    unittest.main()

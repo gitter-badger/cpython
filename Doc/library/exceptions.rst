@@ -28,13 +28,14 @@ handler or to report an error condition "just like" the situation in which the
 interpreter raises the same exception; but beware that there is nothing to
 prevent user code from raising an inappropriate error.
 
-The built-in exception classes can be sub-classed to define new exceptions;
-programmers are encouraged to at least derive new exceptions from the
-:exc:`Exception` class and not :exc:`BaseException`.  More information on
-defining exceptions is available in the Python Tutorial under
+The built-in exception classes can be subclassed to define new exceptions;
+programmers are encouraged to derive new exceptions from the :exc:`Exception`
+class or one of its subclasses, and not from :exc:`BaseException`.  More
+information on defining exceptions is available in the Python Tutorial under
 :ref:`tut-userexceptions`.
 
-When raising (or re-raising) an exception in an :keyword:`except` clause
+When raising (or re-raising) an exception in an :keyword:`except` or
+:keyword:`finally` clause
 :attr:`__context__` is automatically set to the last exception caught; if the
 new exception is not handled the traceback that is eventually displayed will
 include the originating exception(s) and the final exception.
@@ -161,7 +162,7 @@ The following exceptions are the exceptions that are usually raised.
 
 .. exception:: GeneratorExit
 
-   Raise when a :term:`generator`\'s :meth:`close` method is called.  It
+   Raised when a :term:`generator`\'s :meth:`close` method is called.  It
    directly inherits from :exc:`BaseException` instead of :exc:`Exception` since
    it is technically not an error.
 
@@ -274,9 +275,10 @@ The following exceptions are the exceptions that are usually raised.
 
    Raised when the result of an arithmetic operation is too large to be
    represented.  This cannot occur for integers (which would rather raise
-   :exc:`MemoryError` than give up).  Because of the lack of standardization of
-   floating point exception handling in C, most floating point operations also
-   aren't checked.
+   :exc:`MemoryError` than give up).  However, for historical reasons,
+   OverflowError is sometimes raised for integers that are outside a required
+   range.   Because of the lack of standardization of floating point exception
+   handling in C, most floating point operations are not checked.
 
 
 .. exception:: ReferenceError
@@ -351,17 +353,16 @@ The following exceptions are the exceptions that are usually raised.
 
 .. exception:: SystemExit
 
-   This exception is raised by the :func:`sys.exit` function.  When it is not
-   handled, the Python interpreter exits; no stack traceback is printed.  If the
-   associated value is an integer, it specifies the system exit status (passed
-   to C's :c:func:`exit` function); if it is ``None``, the exit status is zero;
-   if it has another type (such as a string), the object's value is printed and
+   This exception is raised by the :func:`sys.exit` function.  It inherits from
+   :exc:`BaseException` instead of :exc:`Exception` so that it is not accidentally
+   caught by code that catches :exc:`Exception`.  This allows the exception to
+   properly propagate up and cause the interpreter to exit.  When it is not
+   handled, the Python interpreter exits; no stack traceback is printed.  The
+   constructor accepts the same optional argument passed to :func:`sys.exit`.
+   If the value is an integer, it specifies the system exit status (passed to
+   C's :c:func:`exit` function); if it is ``None``, the exit status is zero; if
+   it has another type (such as a string), the object's value is printed and
    the exit status is one.
-
-   Instances have an attribute :attr:`!code` which is set to the proposed exit
-   status or error message (defaulting to ``None``). Also, this exception derives
-   directly from :exc:`BaseException` and not :exc:`Exception`, since it is not
-   technically an error.
 
    A call to :func:`sys.exit` is translated into an exception so that clean-up
    handlers (:keyword:`finally` clauses of :keyword:`try` statements) can be
@@ -370,9 +371,10 @@ The following exceptions are the exceptions that are usually raised.
    absolutely positively necessary to exit immediately (for example, in the child
    process after a call to :func:`os.fork`).
 
-   The exception inherits from :exc:`BaseException` instead of :exc:`Exception` so
-   that it is not accidentally caught by code that catches :exc:`Exception`.  This
-   allows the exception to properly propagate up and cause the interpreter to exit.
+   .. attribute:: code
+
+      The exit status or error message that is passed to the constructor.
+      (Defaults to ``None``.)
 
 
 .. exception:: TypeError
@@ -457,10 +459,6 @@ starting from Python 3.3, they are aliases of :exc:`OSError`.
 
 .. exception:: IOError
 
-.. exception:: VMSError
-
-   Only available on VMS.
-
 .. exception:: WindowsError
 
    Only available on Windows.
@@ -538,7 +536,12 @@ depending on the system error code.
 .. exception:: InterruptedError
 
    Raised when a system call is interrupted by an incoming signal.
-   Corresponds to :c:data:`errno` ``EINTR``.
+   Corresponds to :c:data:`errno` :py:data:`~errno.EINTR`.
+
+   .. versionchanged:: 3.5
+      Python now retries system calls when a syscall is interrupted by a
+      signal, except if the signal handler raises an exception (see :pep:`475`
+      for the rationale), instead of raising :exc:`InterruptedError`.
 
 .. exception:: IsADirectoryError
 

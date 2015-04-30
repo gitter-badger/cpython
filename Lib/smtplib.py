@@ -50,8 +50,9 @@ import email.generator
 import base64
 import hmac
 import copy
+import datetime
+import sys
 from email.base64mime import body_encode as encode_base64
-from sys import stderr
 
 __all__ = ["SMTPException", "SMTPServerDisconnected", "SMTPResponseException",
            "SMTPSenderRefused", "SMTPRecipientsRefused", "SMTPDataError",
@@ -282,12 +283,17 @@ class SMTP:
         """
         self.debuglevel = debuglevel
 
+    def _print_debug(self, *args):
+        if self.debuglevel > 1:
+            print(datetime.datetime.now().time(), *args, file=sys.stderr)
+        else:
+            print(*args, file=sys.stderr)
+
     def _get_socket(self, host, port, timeout):
         # This makes it simpler for SMTP_SSL to use the SMTP connect code
         # and just alter the socket connection bit.
         if self.debuglevel > 0:
-            print('connect: to', (host, port), self.source_address,
-                                 file=stderr)
+            self._print_debug('connect: to', (host, port), self.source_address)
         return socket.create_connection((host, port), timeout,
                                         self.source_address)
 
@@ -317,18 +323,18 @@ class SMTP:
         if not port:
             port = self.default_port
         if self.debuglevel > 0:
-            print('connect:', (host, port), file=stderr)
+            self._print_debug('connect:', (host, port))
         self.sock = self._get_socket(host, port, self.timeout)
         self.file = None
         (code, msg) = self.getreply()
         if self.debuglevel > 0:
-            print("connect:", msg, file=stderr)
+            self._print_debug('connect:', repr(msg))
         return (code, msg)
 
     def send(self, s):
         """Send `s' to the server."""
         if self.debuglevel > 0:
-            print('send:', repr(s), file=stderr)
+            self._print_debug('send:', repr(s))
         if hasattr(self, 'sock') and self.sock:
             if isinstance(s, str):
                 s = s.encode("ascii")
@@ -375,8 +381,9 @@ class SMTP:
                 self.close()
                 raise SMTPServerDisconnected("Connection unexpectedly closed")
             if self.debuglevel > 0:
-                print('reply:', repr(line), file=stderr)
+                self._print_debug('reply:', repr(line))
             if len(line) > _MAXLINE:
+                self.close()
                 raise SMTPResponseException(500, "Line too long.")
             resp.append(line[4:].strip(b' \t\r\n'))
             code = line[:3]
@@ -393,8 +400,7 @@ class SMTP:
 
         errmsg = b"\n".join(resp)
         if self.debuglevel > 0:
-            print('reply: retcode (%s); Msg: %s' % (errcode, errmsg),
-                                                    file=stderr)
+            self._print_debug('reply: retcode (%s); Msg: %a' % (errcode, errmsg))
         return errcode, errmsg
 
     def docmd(self, cmd, args=""):
@@ -478,6 +484,18 @@ class SMTP:
         """SMTP 'rset' command -- resets session."""
         return self.docmd("rset")
 
+    def _rset(self):
+        """Internal 'rset' command which ignores any SMTPServerDisconnected error.
+
+        Used internally in the library, since the server disconnected error
+        should appear to the application when the *next* command is issued, if
+        we are doing an internal "safety" reset.
+        """
+        try:
+            self.rset()
+        except SMTPServerDisconnected:
+            pass
+
     def noop(self):
         """SMTP 'noop' command -- doesn't do anything :>"""
         return self.docmd("noop")
@@ -505,13 +523,13 @@ class SMTP:
         Raises SMTPDataError if there is an unexpected reply to the
         DATA command; the return value from this method is the final
         response code received when the all data is sent.  If msg
-        is a string, lone '\r' and '\n' characters are converted to
-        '\r\n' characters.  If msg is bytes, it is transmitted as is.
+        is a string, lone '\\r' and '\\n' characters are converted to
+        '\\r\\n' characters.  If msg is bytes, it is transmitted as is.
         """
         self.putcmd("data")
         (code, repl) = self.getreply()
         if self.debuglevel > 0:
-            print("data:", (code, repl), file=stderr)
+            self._print_debug('data:', (code, repl))
         if code != 354:
             raise SMTPDataError(code, repl)
         else:
@@ -524,7 +542,7 @@ class SMTP:
             self.send(q)
             (code, msg) = self.getreply()
             if self.debuglevel > 0:
-                print("data:", (code, msg), file=stderr)
+                self._print_debug('data:', (code, msg))
             return (code, msg)
 
     def verify(self, address):
@@ -558,12 +576,60 @@ class SMTP:
                 if not (200 <= code <= 299):
                     raise SMTPHeloError(code, resp)
 
+    def auth(self, mechanism, authobject):
+        """Authentication command - requires response processing.
+
+        'mechanism' specifies which authentication mechanism is to
+        be used - the valid values are those listed in the 'auth'
+        element of 'esmtp_features'.
+
+        'authobject' must be a callable object taking a single argument:
+
+                data = authobject(challenge)
+
+        It will be called to process the server's challenge response; the
+        challenge argument it is passed will be a bytes.  It should return
+        bytes data that will be base64 encoded and sent to the server.
+        """
+
+        mechanism = mechanism.upper()
+        (code, resp) = self.docmd("AUTH", mechanism)
+        # Server replies with 334 (challenge) or 535 (not supported)
+        if code == 334:
+            challenge = base64.decodebytes(resp)
+            response = encode_base64(
+                authobject(challenge).encode('ascii'), eol='')
+            (code, resp) = self.docmd(response)
+            if code in (235, 503):
+                return (code, resp)
+        raise SMTPAuthenticationError(code, resp)
+
+    def auth_cram_md5(self, challenge):
+        """ Authobject to use with CRAM-MD5 authentication. Requires self.user
+        and self.password to be set."""
+        return self.user + " " + hmac.HMAC(
+            self.password.encode('ascii'), challenge, 'md5').hexdigest()
+
+    def auth_plain(self, challenge):
+        """ Authobject to use with PLAIN authentication. Requires self.user and
+        self.password to be set."""
+        return "\0%s\0%s" % (self.user, self.password)
+
+    def auth_login(self, challenge):
+        """ Authobject to use with LOGIN authentication. Requires self.user and
+        self.password to be set."""
+        (code, resp) = self.docmd(
+            encode_base64(self.user.encode('ascii'), eol=''))
+        if code == 334:
+            return self.password
+        raise SMTPAuthenticationError(code, resp)
+
     def login(self, user, password):
         """Log in on an SMTP server that requires authentication.
 
         The arguments are:
-            - user:     The user name to authenticate with.
-            - password: The password for the authentication.
+            - user:         The user name to authenticate with.
+            - password:     The password for the authentication.
 
         If there has been no previous EHLO or HELO command this session, this
         method tries ESMTP EHLO first.
@@ -580,63 +646,40 @@ class SMTP:
                                   found.
         """
 
-        def encode_cram_md5(challenge, user, password):
-            challenge = base64.decodebytes(challenge)
-            response = user + " " + hmac.HMAC(password.encode('ascii'),
-                                              challenge, 'md5').hexdigest()
-            return encode_base64(response.encode('ascii'), eol='')
-
-        def encode_plain(user, password):
-            s = "\0%s\0%s" % (user, password)
-            return encode_base64(s.encode('ascii'), eol='')
-
-        AUTH_PLAIN = "PLAIN"
-        AUTH_CRAM_MD5 = "CRAM-MD5"
-        AUTH_LOGIN = "LOGIN"
-
         self.ehlo_or_helo_if_needed()
-
         if not self.has_extn("auth"):
             raise SMTPException("SMTP AUTH extension not supported by server.")
 
         # Authentication methods the server claims to support
         advertised_authlist = self.esmtp_features["auth"].split()
 
-        # List of authentication methods we support: from preferred to
-        # less preferred methods. Except for the purpose of testing the weaker
-        # ones, we prefer stronger methods like CRAM-MD5:
-        preferred_auths = [AUTH_CRAM_MD5, AUTH_PLAIN, AUTH_LOGIN]
+        # Authentication methods we can handle in our preferred order:
+        preferred_auths = ['CRAM-MD5', 'PLAIN', 'LOGIN']
 
-        # We try the authentication methods the server advertises, but only the
-        # ones *we* support. And in our preferred order.
-        authlist = [auth for auth in preferred_auths if auth in advertised_authlist]
+        # We try the supported authentications in our preferred order, if
+        # the server supports them.
+        authlist = [auth for auth in preferred_auths
+                    if auth in advertised_authlist]
         if not authlist:
             raise SMTPException("No suitable authentication method found.")
 
         # Some servers advertise authentication methods they don't really
         # support, so if authentication fails, we continue until we've tried
         # all methods.
+        self.user, self.password = user, password
         for authmethod in authlist:
-            if authmethod == AUTH_CRAM_MD5:
-                (code, resp) = self.docmd("AUTH", AUTH_CRAM_MD5)
-                if code == 334:
-                    (code, resp) = self.docmd(encode_cram_md5(resp, user, password))
-            elif authmethod == AUTH_PLAIN:
-                (code, resp) = self.docmd("AUTH",
-                    AUTH_PLAIN + " " + encode_plain(user, password))
-            elif authmethod == AUTH_LOGIN:
-                (code, resp) = self.docmd("AUTH",
-                    "%s %s" % (AUTH_LOGIN, encode_base64(user.encode('ascii'), eol='')))
-                if code == 334:
-                    (code, resp) = self.docmd(encode_base64(password.encode('ascii'), eol=''))
+            method_name = 'auth_' + authmethod.lower().replace('-', '_')
+            try:
+                (code, resp) = self.auth(authmethod, getattr(self, method_name))
+                # 235 == 'Authentication successful'
+                # 503 == 'Error: already authenticated'
+                if code in (235, 503):
+                    return (code, resp)
+            except SMTPAuthenticationError as e:
+                last_exception = e
 
-            # 235 == 'Authentication successful'
-            # 503 == 'Error: already authenticated'
-            if code in (235, 503):
-                return (code, resp)
-
-        # We could not login sucessfully. Return result of last attempt.
-        raise SMTPAuthenticationError(code, resp)
+        # We could not login successfully.  Return result of last attempt.
+        raise last_exception
 
     def starttls(self, keyfile=None, certfile=None, context=None):
         """Puts the connection to the SMTP server into TLS mode.
@@ -671,9 +714,8 @@ class SMTP:
             if context is None:
                 context = ssl._create_stdlib_context(certfile=certfile,
                                                      keyfile=keyfile)
-            server_hostname = self._host if ssl.HAS_SNI else None
             self.sock = context.wrap_socket(self.sock,
-                                            server_hostname=server_hostname)
+                                            server_hostname=self._host)
             self.file = None
             # RFC 3207:
             # The client MUST discard any knowledge obtained from
@@ -762,7 +804,7 @@ class SMTP:
             if code == 421:
                 self.close()
             else:
-                self.rset()
+                self._rset()
             raise SMTPSenderRefused(code, resp, from_addr)
         senderrs = {}
         if isinstance(to_addrs, str):
@@ -776,14 +818,14 @@ class SMTP:
                 raise SMTPRecipientsRefused(senderrs)
         if len(senderrs) == len(to_addrs):
             # the server refused all our recipients
-            self.rset()
+            self._rset()
             raise SMTPRecipientsRefused(senderrs)
         (code, resp) = self.data(msg)
         if code != 250:
             if code == 421:
                 self.close()
             else:
-                self.rset()
+                self._rset()
             raise SMTPDataError(code, resp)
         #if we got here then somebody got our mail
         return senderrs
@@ -843,16 +885,24 @@ class SMTP:
 
     def close(self):
         """Close the connection to the SMTP server."""
-        if self.file:
-            self.file.close()
-        self.file = None
-        if self.sock:
-            self.sock.close()
-        self.sock = None
+        try:
+            file = self.file
+            self.file = None
+            if file:
+                file.close()
+        finally:
+            sock = self.sock
+            self.sock = None
+            if sock:
+                sock.close()
 
     def quit(self):
         """Terminate the SMTP session."""
         res = self.docmd("quit")
+        # A new EHLO is required after reconnecting with connect()
+        self.ehlo_resp = self.helo_resp = None
+        self.esmtp_features = {}
+        self.does_esmtp = False
         self.close()
         return res
 
@@ -895,12 +945,11 @@ if _have_ssl:
 
         def _get_socket(self, host, port, timeout):
             if self.debuglevel > 0:
-                print('connect:', (host, port), file=stderr)
+                self._print_debug('connect:', (host, port))
             new_socket = socket.create_connection((host, port), timeout,
                     self.source_address)
-            server_hostname = self._host if ssl.HAS_SNI else None
             new_socket = self.context.wrap_socket(new_socket,
-                                                  server_hostname=server_hostname)
+                                                  server_hostname=self._host)
             return new_socket
 
     __all__.append("SMTP_SSL")
@@ -944,14 +993,14 @@ class LMTP(SMTP):
             self.sock.connect(host)
         except OSError:
             if self.debuglevel > 0:
-                print('connect fail:', host, file=stderr)
+                self._print_debug('connect fail:', host)
             if self.sock:
                 self.sock.close()
             self.sock = None
             raise
         (code, msg) = self.getreply()
         if self.debuglevel > 0:
-            print('connect:', msg, file=stderr)
+            self._print_debug('connect:', msg)
         return (code, msg)
 
 

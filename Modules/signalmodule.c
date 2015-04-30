@@ -7,6 +7,9 @@
 #ifndef MS_WINDOWS
 #include "posixmodule.h"
 #endif
+#ifdef MS_WINDOWS
+#include "socketmodule.h"   /* needed for SOCKET_T */
+#endif
 
 #ifdef MS_WINDOWS
 #include <windows.h>
@@ -87,7 +90,20 @@ static volatile struct {
     PyObject *func;
 } Handlers[NSIG];
 
+#ifdef MS_WINDOWS
+#define INVALID_FD ((SOCKET_T)-1)
+
+static volatile struct {
+    SOCKET_T fd;
+    int use_send;
+    int send_err_set;
+    int send_errno;
+    int send_win_error;
+} wakeup = {INVALID_FD, 0, 0};
+#else
+#define INVALID_FD (-1)
 static volatile sig_atomic_t wakeup_fd = -1;
+#endif
 
 /* Speed up sigcheck() when none tripped */
 static volatile sig_atomic_t is_tripped = 0;
@@ -172,7 +188,7 @@ checksignals_witharg(void * unused)
 }
 
 static int
-report_wakeup_error(void *data)
+report_wakeup_write_error(void *data)
 {
     int save_errno = errno;
     errno = (int) (Py_intptr_t) data;
@@ -184,25 +200,87 @@ report_wakeup_error(void *data)
     return 0;
 }
 
+#ifdef MS_WINDOWS
+static int
+report_wakeup_send_error(void* Py_UNUSED(data))
+{
+    PyObject *res;
+
+    if (wakeup.send_win_error) {
+        /* PyErr_SetExcFromWindowsErr() invokes FormatMessage() which
+           recognizes the error codes used by both GetLastError() and
+           WSAGetLastError */
+        res = PyErr_SetExcFromWindowsErr(PyExc_OSError, wakeup.send_win_error);
+    }
+    else {
+        errno = wakeup.send_errno;
+        res = PyErr_SetFromErrno(PyExc_OSError);
+    }
+
+    assert(res == NULL);
+    wakeup.send_err_set = 0;
+
+    PySys_WriteStderr("Exception ignored when trying to send to the "
+                      "signal wakeup fd:\n");
+    PyErr_WriteUnraisable(NULL);
+
+    return 0;
+}
+#endif   /* MS_WINDOWS */
+
 static void
 trip_signal(int sig_num)
 {
     unsigned char byte;
-    int rc = 0;
+    int fd;
+    Py_ssize_t rc;
 
     Handlers[sig_num].tripped = 1;
-    if (wakeup_fd != -1) {
+
+#ifdef MS_WINDOWS
+    fd = Py_SAFE_DOWNCAST(wakeup.fd, SOCKET_T, int);
+#else
+    fd = wakeup_fd;
+#endif
+
+    if (fd != INVALID_FD) {
         byte = (unsigned char)sig_num;
-        while ((rc = write(wakeup_fd, &byte, 1)) == -1 && errno == EINTR);
-        if (rc == -1)
-            Py_AddPendingCall(report_wakeup_error, (void *) (Py_intptr_t) errno);
+#ifdef MS_WINDOWS
+        if (wakeup.use_send) {
+            do {
+                rc = send(fd, &byte, 1, 0);
+            } while (rc < 0 && errno == EINTR);
+
+            /* we only have a storage for one error in the wakeup structure */
+            if (rc < 0 && !wakeup.send_err_set) {
+                wakeup.send_err_set = 1;
+                wakeup.send_errno = errno;
+                wakeup.send_win_error = GetLastError();
+                Py_AddPendingCall(report_wakeup_send_error, NULL);
+            }
+        }
+        else
+#endif
+        {
+            byte = (unsigned char)sig_num;
+
+            /* _Py_write_noraise() retries write() if write() is interrupted by
+               a signal (fails with EINTR). */
+            rc = _Py_write_noraise(fd, &byte, 1);
+
+            if (rc < 0) {
+                Py_AddPendingCall(report_wakeup_write_error,
+                                  (void *)(Py_intptr_t)errno);
+            }
+        }
     }
-    if (is_tripped)
-        return;
-    /* Set is_tripped after setting .tripped, as it gets
-       cleared in PyErr_CheckSignals() before .tripped. */
-    is_tripped = 1;
-    Py_AddPendingCall(checksignals_witharg, NULL);
+
+    if (!is_tripped) {
+        /* Set is_tripped after setting .tripped, as it gets
+           cleared in PyErr_CheckSignals() before .tripped. */
+        is_tripped = 1;
+        Py_AddPendingCall(checksignals_witharg, NULL);
+    }
 }
 
 static void
@@ -227,7 +305,7 @@ signal_handler(int sig_num)
     if (sig_num != SIGCHLD)
 #endif
     /* If the handler was not set up with sigaction, reinstall it.  See
-     * Python/pythonrun.c for the implementation of PyOS_setsig which
+     * Python/pylifecycle.c for the implementation of PyOS_setsig which
      * makes this true.  See also issue8354. */
     PyOS_setsig(sig_num, signal_handler);
 #endif
@@ -426,10 +504,28 @@ signal_siginterrupt(PyObject *self, PyObject *args)
 static PyObject *
 signal_set_wakeup_fd(PyObject *self, PyObject *args)
 {
-    struct stat buf;
+    struct _Py_stat_struct status;
+#ifdef MS_WINDOWS
+    PyObject *fdobj;
+    SOCKET_T sockfd, old_sockfd;
+    int res;
+    int res_size = sizeof res;
+    PyObject *mod;
+    int is_socket;
+
+    if (!PyArg_ParseTuple(args, "O:set_wakeup_fd", &fdobj))
+        return NULL;
+
+    sockfd = PyLong_AsSocket_t(fdobj);
+    if (sockfd == (SOCKET_T)(-1) && PyErr_Occurred())
+        return NULL;
+#else
     int fd, old_fd;
+
     if (!PyArg_ParseTuple(args, "i:set_wakeup_fd", &fd))
         return NULL;
+#endif
+
 #ifdef WITH_THREAD
     if (PyThread_get_thread_ident() != main_thread) {
         PyErr_SetString(PyExc_ValueError,
@@ -437,21 +533,90 @@ signal_set_wakeup_fd(PyObject *self, PyObject *args)
         return NULL;
     }
 #endif
-    if (fd != -1 && (!_PyVerify_fd(fd) || fstat(fd, &buf) != 0)) {
-        PyErr_SetString(PyExc_ValueError, "invalid fd");
-        return NULL;
+
+#ifdef MS_WINDOWS
+    is_socket = 0;
+    if (sockfd != INVALID_FD) {
+        /* Import the _socket module to call WSAStartup() */
+        mod = PyImport_ImportModuleNoBlock("_socket");
+        if (mod == NULL)
+            return NULL;
+        Py_DECREF(mod);
+
+        /* test the socket */
+        if (getsockopt(sockfd, SOL_SOCKET, SO_ERROR,
+                       (char *)&res, &res_size) != 0) {
+            int fd, err;
+
+            err = WSAGetLastError();
+            if (err != WSAENOTSOCK) {
+                PyErr_SetExcFromWindowsErr(PyExc_OSError, err);
+                return NULL;
+            }
+
+            fd = (int)sockfd;
+            if ((SOCKET_T)fd != sockfd || !_PyVerify_fd(fd)) {
+                PyErr_SetString(PyExc_ValueError, "invalid fd");
+                return NULL;
+            }
+
+            if (_Py_fstat(fd, &status) != 0)
+                return NULL;
+
+            /* on Windows, a file cannot be set to non-blocking mode */
+        }
+        else {
+            is_socket = 1;
+
+            /* Windows does not provide a function to test if a socket
+               is in non-blocking mode */
+        }
     }
+
+    old_sockfd = wakeup.fd;
+    wakeup.fd = sockfd;
+    wakeup.use_send = is_socket;
+
+    if (old_sockfd != INVALID_FD)
+        return PyLong_FromSocket_t(old_sockfd);
+    else
+        return PyLong_FromLong(-1);
+#else
+    if (fd != -1) {
+        int blocking;
+
+        if (!_PyVerify_fd(fd)) {
+            PyErr_SetString(PyExc_ValueError, "invalid fd");
+            return NULL;
+        }
+
+        if (_Py_fstat(fd, &status) != 0)
+            return NULL;
+
+        blocking = _Py_get_blocking(fd);
+        if (blocking < 0)
+            return NULL;
+        if (blocking) {
+            PyErr_Format(PyExc_ValueError,
+                         "the fd %i must be in non-blocking mode",
+                         fd);
+            return NULL;
+        }
+    }
+
     old_fd = wakeup_fd;
     wakeup_fd = fd;
+
     return PyLong_FromLong(old_fd);
+#endif
 }
 
 PyDoc_STRVAR(set_wakeup_fd_doc,
 "set_wakeup_fd(fd) -> fd\n\
 \n\
-Sets the fd to be written to (with '\\0') when a signal\n\
+Sets the fd to be written to (with the signal number) when a signal\n\
 comes in.  A library can use this to wakeup select or poll.\n\
-The previous fd is returned.\n\
+The previous fd or -1 is returned.\n\
 \n\
 The fd must be non-blocking.");
 
@@ -459,10 +624,17 @@ The fd must be non-blocking.");
 int
 PySignal_SetWakeupFd(int fd)
 {
-    int old_fd = wakeup_fd;
+    int old_fd;
     if (fd < 0)
         fd = -1;
+
+#ifdef MS_WINDOWS
+    old_fd = Py_SAFE_DOWNCAST(wakeup.fd, SOCKET_T, int);
+    wakeup.fd = fd;
+#else
+    old_fd = wakeup_fd;
     wakeup_fd = fd;
+#endif
     return old_fd;
 }
 
@@ -759,6 +931,7 @@ signal_sigwaitinfo(PyObject *self, PyObject *args)
     sigset_t set;
     siginfo_t si;
     int err;
+    int async_err = 0;
 
     if (!PyArg_ParseTuple(args, "O:sigwaitinfo", &signals))
         return NULL;
@@ -766,11 +939,14 @@ signal_sigwaitinfo(PyObject *self, PyObject *args)
     if (iterable_to_sigset(signals, &set))
         return NULL;
 
-    Py_BEGIN_ALLOW_THREADS
-    err = sigwaitinfo(&set, &si);
-    Py_END_ALLOW_THREADS
+    do {
+        Py_BEGIN_ALLOW_THREADS
+        err = sigwaitinfo(&set, &si);
+        Py_END_ALLOW_THREADS
+    } while (err == -1
+             && errno == EINTR && !(async_err = PyErr_CheckSignals()));
     if (err == -1)
-        return PyErr_SetFromErrno(PyExc_OSError);
+        return (!async_err) ? PyErr_SetFromErrno(PyExc_OSError) : NULL;
 
     return fill_siginfo(&si);
 }
@@ -787,25 +963,22 @@ Returns a struct_siginfo containing information about the signal.");
 static PyObject *
 signal_sigtimedwait(PyObject *self, PyObject *args)
 {
-    PyObject *signals, *timeout;
-    struct timespec buf;
+    PyObject *signals, *timeout_obj;
+    struct timespec ts;
     sigset_t set;
     siginfo_t si;
-    time_t tv_sec;
-    long tv_nsec;
-    int err;
+    int res;
+    _PyTime_t timeout, deadline, monotonic;
 
     if (!PyArg_ParseTuple(args, "OO:sigtimedwait",
-                          &signals, &timeout))
+                          &signals, &timeout_obj))
         return NULL;
 
-    if (_PyTime_ObjectToTimespec(timeout, &tv_sec, &tv_nsec,
-                                 _PyTime_ROUND_DOWN) == -1)
+    if (_PyTime_FromSecondsObject(&timeout,
+                                  timeout_obj, _PyTime_ROUND_CEILING) < 0)
         return NULL;
-    buf.tv_sec = tv_sec;
-    buf.tv_nsec = tv_nsec;
 
-    if (buf.tv_sec < 0 || buf.tv_nsec < 0) {
+    if (timeout < 0) {
         PyErr_SetString(PyExc_ValueError, "timeout must be non-negative");
         return NULL;
     }
@@ -813,15 +986,35 @@ signal_sigtimedwait(PyObject *self, PyObject *args)
     if (iterable_to_sigset(signals, &set))
         return NULL;
 
-    Py_BEGIN_ALLOW_THREADS
-    err = sigtimedwait(&set, &si, &buf);
-    Py_END_ALLOW_THREADS
-    if (err == -1) {
-        if (errno == EAGAIN)
-            Py_RETURN_NONE;
-        else
-            return PyErr_SetFromErrno(PyExc_OSError);
-    }
+    deadline = _PyTime_GetMonotonicClock() + timeout;
+
+    do {
+        if (_PyTime_AsTimespec(timeout, &ts) < 0)
+            return NULL;
+
+        Py_BEGIN_ALLOW_THREADS
+        res = sigtimedwait(&set, &si, &ts);
+        Py_END_ALLOW_THREADS
+
+        if (res != -1)
+            break;
+
+        if (errno != EINTR) {
+            if (errno == EAGAIN)
+                Py_RETURN_NONE;
+            else
+                return PyErr_SetFromErrno(PyExc_OSError);
+        }
+
+        /* sigtimedwait() was interrupted by a signal (EINTR) */
+        if (PyErr_CheckSignals())
+            return NULL;
+
+        monotonic = _PyTime_GetMonotonicClock();
+        timeout = deadline - monotonic;
+        if (timeout < 0)
+            break;
+    } while (1);
 
     return fill_siginfo(&si);
 }

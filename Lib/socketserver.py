@@ -136,15 +136,12 @@ try:
     import threading
 except ImportError:
     import dummy_threading as threading
-try:
-    from time import monotonic as time
-except ImportError:
-    from time import time as time
+from time import monotonic as time
 
-__all__ = ["TCPServer","UDPServer","ForkingUDPServer","ForkingTCPServer",
-           "ThreadingUDPServer","ThreadingTCPServer","BaseRequestHandler",
-           "StreamRequestHandler","DatagramRequestHandler",
-           "ThreadingMixIn", "ForkingMixIn"]
+__all__ = ["BaseServer", "TCPServer", "UDPServer", "ForkingUDPServer",
+           "ForkingTCPServer", "ThreadingUDPServer", "ThreadingTCPServer",
+           "BaseRequestHandler", "StreamRequestHandler",
+           "DatagramRequestHandler", "ThreadingMixIn", "ForkingMixIn"]
 if hasattr(socket, "AF_UNIX"):
     __all__.extend(["UnixStreamServer","UnixDatagramServer",
                     "ThreadingUnixStreamServer",
@@ -291,7 +288,7 @@ class BaseServer:
             deadline = time() + timeout
 
         # Wait until a request arrives or the timeout expires - the loop is
-        # necessary to accomodate early wakeups due to EINTR.
+        # necessary to accommodate early wakeups due to EINTR.
         with _ServerSelector() as selector:
             selector.register(self, selectors.EVENT_READ)
 
@@ -442,8 +439,12 @@ class TCPServer(BaseServer):
         self.socket = socket.socket(self.address_family,
                                     self.socket_type)
         if bind_and_activate:
-            self.server_bind()
-            self.server_activate()
+            try:
+                self.server_bind()
+                self.server_activate()
+            except:
+                self.server_close()
+                raise
 
     def server_bind(self):
         """Called by constructor to bind the socket.
@@ -539,35 +540,37 @@ class ForkingMixIn:
 
     def collect_children(self):
         """Internal routine to wait for children that have exited."""
-        if self.active_children is None: return
-        while len(self.active_children) >= self.max_children:
-            # XXX: This will wait for any child process, not just ones
-            # spawned by this library. This could confuse other
-            # libraries that expect to be able to wait for their own
-            # children.
-            try:
-                pid, status = os.waitpid(0, 0)
-            except OSError:
-                pid = None
-            if pid not in self.active_children: continue
-            self.active_children.remove(pid)
+        if self.active_children is None:
+            return
 
-        # XXX: This loop runs more system calls than it ought
-        # to. There should be a way to put the active_children into a
-        # process group and then use os.waitpid(-pgid) to wait for any
-        # of that set, but I couldn't find a way to allocate pgids
-        # that couldn't collide.
-        for child in self.active_children:
+        # If we're above the max number of children, wait and reap them until
+        # we go back below threshold. Note that we use waitpid(-1) below to be
+        # able to collect children in size(<defunct children>) syscalls instead
+        # of size(<children>): the downside is that this might reap children
+        # which we didn't spawn, which is why we only resort to this when we're
+        # above max_children.
+        while len(self.active_children) >= self.max_children:
             try:
-                pid, status = os.waitpid(child, os.WNOHANG)
+                pid, _ = os.waitpid(-1, 0)
+                self.active_children.discard(pid)
+            except ChildProcessError:
+                # we don't have any children, we're done
+                self.active_children.clear()
             except OSError:
-                pid = None
-            if not pid: continue
+                break
+
+        # Now reap all defunct children.
+        for pid in self.active_children.copy():
             try:
-                self.active_children.remove(pid)
-            except ValueError as e:
-                raise ValueError('%s. x=%d and list=%r' % (e.message, pid,
-                                                           self.active_children))
+                pid, _ = os.waitpid(pid, os.WNOHANG)
+                # if the child hasn't exited yet, pid will be 0 and ignored by
+                # discard() below
+                self.active_children.discard(pid)
+            except ChildProcessError:
+                # someone else reaped it
+                self.active_children.discard(pid)
+            except OSError:
+                pass
 
     def handle_timeout(self):
         """Wait for zombies after self.timeout seconds of inactivity.
@@ -589,8 +592,8 @@ class ForkingMixIn:
         if pid:
             # Parent process
             if self.active_children is None:
-                self.active_children = []
-            self.active_children.append(pid)
+                self.active_children = set()
+            self.active_children.add(pid)
             self.close_request(request)
             return
         else:

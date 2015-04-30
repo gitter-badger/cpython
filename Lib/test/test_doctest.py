@@ -4,6 +4,7 @@ Test script for doctest.
 
 from test import support
 import doctest
+import functools
 import os
 import sys
 
@@ -434,7 +435,7 @@ We'll simulate a __file__ attr that ends in pyc:
     >>> tests = finder.find(sample_func)
 
     >>> print(tests)  # doctest: +ELLIPSIS
-    [<DocTest sample_func from ...:18 (1 example)>]
+    [<DocTest sample_func from ...:19 (1 example)>]
 
 The exact name depends on how test_doctest was invoked, so allow for
 leading path components.
@@ -658,7 +659,7 @@ plain ol' Python and is guaranteed to be available.
 
     >>> import builtins
     >>> tests = doctest.DocTestFinder().find(builtins)
-    >>> 790 < len(tests) < 800 # approximate number of objects with docstrings
+    >>> 790 < len(tests) < 810 # approximate number of objects with docstrings
     True
     >>> real_tests = [t for t in tests if len(t.examples) > 0]
     >>> len(real_tests) # objects that actually have doctests
@@ -2096,22 +2097,9 @@ def test_DocTestSuite():
          >>> suite.run(unittest.TestResult())
          <unittest.result.TestResult run=0 errors=0 failures=0>
 
-       However, if DocTestSuite finds no docstrings, it raises an error:
+       The module need not contain any docstrings either:
 
-         >>> try:
-         ...     doctest.DocTestSuite('test.sample_doctest_no_docstrings')
-         ... except ValueError as e:
-         ...     error = e
-
-         >>> print(error.args[1])
-         has no docstrings
-
-       You can prevent this error by passing a DocTestFinder instance with
-       the `exclude_empty` keyword argument set to False:
-
-         >>> finder = doctest.DocTestFinder(exclude_empty=False)
-         >>> suite = doctest.DocTestSuite('test.sample_doctest_no_docstrings',
-         ...                              test_finder=finder)
+         >>> suite = doctest.DocTestSuite('test.sample_doctest_no_docstrings')
          >>> suite.run(unittest.TestResult())
          <unittest.result.TestResult run=0 errors=0 failures=0>
 
@@ -2120,6 +2108,22 @@ def test_DocTestSuite():
          >>> suite = test.sample_doctest.test_suite()
          >>> suite.run(unittest.TestResult())
          <unittest.result.TestResult run=9 errors=0 failures=4>
+
+       We can also provide a DocTestFinder:
+
+         >>> finder = doctest.DocTestFinder()
+         >>> suite = doctest.DocTestSuite('test.sample_doctest',
+         ...                          test_finder=finder)
+         >>> suite.run(unittest.TestResult())
+         <unittest.result.TestResult run=9 errors=0 failures=4>
+
+       The DocTestFinder need not return any tests:
+
+         >>> finder = doctest.DocTestFinder()
+         >>> suite = doctest.DocTestSuite('test.sample_doctest_no_docstrings',
+         ...                          test_finder=finder)
+         >>> suite.run(unittest.TestResult())
+         <unittest.result.TestResult run=0 errors=0 failures=0>
 
        We can supply global variables.  If we pass globs, they will be
        used instead of the module globals.  Here we'll pass an empty
@@ -2168,9 +2172,9 @@ def test_DocTestSuite():
          >>> test.test_doctest.sillySetup
          Traceback (most recent call last):
          ...
-         AttributeError: 'module' object has no attribute 'sillySetup'
+         AttributeError: module 'test.test_doctest' has no attribute 'sillySetup'
 
-       The setUp and tearDown funtions are passed test objects. Here
+       The setUp and tearDown functions are passed test objects. Here
        we'll use the setUp function to supply the missing variable y:
 
          >>> def setUp(test):
@@ -2314,9 +2318,9 @@ def test_DocFileSuite():
          >>> test.test_doctest.sillySetup
          Traceback (most recent call last):
          ...
-         AttributeError: 'module' object has no attribute 'sillySetup'
+         AttributeError: module 'test.test_doctest' has no attribute 'sillySetup'
 
-       The setUp and tearDown funtions are passed test objects.
+       The setUp and tearDown functions are passed test objects.
        Here, we'll use a setUp function to set the favorite color in
        test_doctest.txt:
 
@@ -2361,6 +2365,22 @@ def test_trailing_space_in_test():
       foo \n
     """
 
+class Wrapper:
+    def __init__(self, func):
+        self.func = func
+        functools.update_wrapper(self, func)
+
+    def __call__(self, *args, **kwargs):
+        self.func(*args, **kwargs)
+
+@Wrapper
+def test_look_in_unwrapped():
+    """
+    Docstrings in wrapped functions must be detected as well.
+
+    >>> 'one other test'
+    'one other test'
+    """
 
 def test_unittest_reportflags():
     """Default unittest reporting flags can be set to control reporting
@@ -2611,6 +2631,36 @@ Test the verbose output:
     TestResults(failed=0, attempted=2)
     >>> doctest.master = None  # Reset master.
     >>> sys.argv = save_argv
+"""
+
+def test_lineendings(): r"""
+*nix systems use \n line endings, while Windows systems use \r\n.  Python
+handles this using universal newline mode for reading files.  Let's make
+sure doctest does so (issue 8473) by creating temporary test files using each
+of the two line disciplines.  One of the two will be the "wrong" one for the
+platform the test is run on.
+
+Windows line endings first:
+
+    >>> import tempfile, os
+    >>> fn = tempfile.mktemp()
+    >>> with open(fn, 'wb') as f:
+    ...    f.write(b'Test:\r\n\r\n  >>> x = 1 + 1\r\n\r\nDone.\r\n')
+    35
+    >>> doctest.testfile(fn, False)
+    TestResults(failed=0, attempted=1)
+    >>> os.remove(fn)
+
+And now *nix line endings:
+
+    >>> fn = tempfile.mktemp()
+    >>> with open(fn, 'wb') as f:
+    ...     f.write(b'Test:\n\n  >>> x = 1 + 1\n\nDone.\n')
+    30
+    >>> doctest.testfile(fn, False)
+    TestResults(failed=0, attempted=1)
+    >>> os.remove(fn)
+
 """
 
 def test_testmod(): r"""

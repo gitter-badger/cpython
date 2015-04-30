@@ -20,10 +20,12 @@ request. This diagram details these state transitions:
       | ( putheader() )*  endheaders()
       v
     Request-sent
-      |
-      | response = getresponse()
-      v
-    Unread-response   [Response-headers-read]
+      |\_____________________________
+      |                              | getresponse() raises
+      | response = getresponse()     | ConnectionError
+      v                              v
+    Unread-response                Idle
+    [Response-headers-read]
       |\____________________
       |                     |
       | response.read()     | putrequest()
@@ -68,18 +70,23 @@ Req-sent-unread-response       _CS_REQ_SENT       <response_class>
 
 import email.parser
 import email.message
+import http
 import io
 import os
+import re
 import socket
 import collections
 from urllib.parse import urlsplit
 
+# HTTPMessage, parse_headers(), and the HTTP status code constants are
+# intentionally omitted for simplicity
 __all__ = ["HTTPResponse", "HTTPConnection",
            "HTTPException", "NotConnected", "UnknownProtocol",
            "UnknownTransferEncoding", "UnimplementedFileMode",
            "IncompleteRead", "InvalidURL", "ImproperConnectionState",
            "CannotSendRequest", "CannotSendHeader", "ResponseNotReady",
-           "BadStatusLine", "error", "responses"]
+           "BadStatusLine", "LineTooLong", "RemoteDisconnected", "error",
+           "responses"]
 
 HTTP_PORT = 80
 HTTPS_PORT = 443
@@ -91,122 +98,13 @@ _CS_IDLE = 'Idle'
 _CS_REQ_STARTED = 'Request-started'
 _CS_REQ_SENT = 'Request-sent'
 
-# status codes
-# informational
-CONTINUE = 100
-SWITCHING_PROTOCOLS = 101
-PROCESSING = 102
 
-# successful
-OK = 200
-CREATED = 201
-ACCEPTED = 202
-NON_AUTHORITATIVE_INFORMATION = 203
-NO_CONTENT = 204
-RESET_CONTENT = 205
-PARTIAL_CONTENT = 206
-MULTI_STATUS = 207
-IM_USED = 226
+# hack to maintain backwards compatibility
+globals().update(http.HTTPStatus.__members__)
 
-# redirection
-MULTIPLE_CHOICES = 300
-MOVED_PERMANENTLY = 301
-FOUND = 302
-SEE_OTHER = 303
-NOT_MODIFIED = 304
-USE_PROXY = 305
-TEMPORARY_REDIRECT = 307
-
-# client error
-BAD_REQUEST = 400
-UNAUTHORIZED = 401
-PAYMENT_REQUIRED = 402
-FORBIDDEN = 403
-NOT_FOUND = 404
-METHOD_NOT_ALLOWED = 405
-NOT_ACCEPTABLE = 406
-PROXY_AUTHENTICATION_REQUIRED = 407
-REQUEST_TIMEOUT = 408
-CONFLICT = 409
-GONE = 410
-LENGTH_REQUIRED = 411
-PRECONDITION_FAILED = 412
-REQUEST_ENTITY_TOO_LARGE = 413
-REQUEST_URI_TOO_LONG = 414
-UNSUPPORTED_MEDIA_TYPE = 415
-REQUESTED_RANGE_NOT_SATISFIABLE = 416
-EXPECTATION_FAILED = 417
-UNPROCESSABLE_ENTITY = 422
-LOCKED = 423
-FAILED_DEPENDENCY = 424
-UPGRADE_REQUIRED = 426
-PRECONDITION_REQUIRED = 428
-TOO_MANY_REQUESTS = 429
-REQUEST_HEADER_FIELDS_TOO_LARGE = 431
-
-# server error
-INTERNAL_SERVER_ERROR = 500
-NOT_IMPLEMENTED = 501
-BAD_GATEWAY = 502
-SERVICE_UNAVAILABLE = 503
-GATEWAY_TIMEOUT = 504
-HTTP_VERSION_NOT_SUPPORTED = 505
-INSUFFICIENT_STORAGE = 507
-NOT_EXTENDED = 510
-NETWORK_AUTHENTICATION_REQUIRED = 511
-
+# another hack to maintain backwards compatibility
 # Mapping status codes to official W3C names
-responses = {
-    100: 'Continue',
-    101: 'Switching Protocols',
-
-    200: 'OK',
-    201: 'Created',
-    202: 'Accepted',
-    203: 'Non-Authoritative Information',
-    204: 'No Content',
-    205: 'Reset Content',
-    206: 'Partial Content',
-
-    300: 'Multiple Choices',
-    301: 'Moved Permanently',
-    302: 'Found',
-    303: 'See Other',
-    304: 'Not Modified',
-    305: 'Use Proxy',
-    306: '(Unused)',
-    307: 'Temporary Redirect',
-
-    400: 'Bad Request',
-    401: 'Unauthorized',
-    402: 'Payment Required',
-    403: 'Forbidden',
-    404: 'Not Found',
-    405: 'Method Not Allowed',
-    406: 'Not Acceptable',
-    407: 'Proxy Authentication Required',
-    408: 'Request Timeout',
-    409: 'Conflict',
-    410: 'Gone',
-    411: 'Length Required',
-    412: 'Precondition Failed',
-    413: 'Request Entity Too Large',
-    414: 'Request-URI Too Long',
-    415: 'Unsupported Media Type',
-    416: 'Requested Range Not Satisfiable',
-    417: 'Expectation Failed',
-    428: 'Precondition Required',
-    429: 'Too Many Requests',
-    431: 'Request Header Fields Too Large',
-
-    500: 'Internal Server Error',
-    501: 'Not Implemented',
-    502: 'Bad Gateway',
-    503: 'Service Unavailable',
-    504: 'Gateway Timeout',
-    505: 'HTTP Version Not Supported',
-    511: 'Network Authentication Required',
-}
+responses = {v: v.phrase for v in http.HTTPStatus.__members__.values()}
 
 # maximal amount of data to read at one time in _safe_read
 MAXAMOUNT = 1048576
@@ -214,6 +112,38 @@ MAXAMOUNT = 1048576
 # maximal line length when calling readline().
 _MAXLINE = 65536
 _MAXHEADERS = 100
+
+# Header name/value ABNF (http://tools.ietf.org/html/rfc7230#section-3.2)
+#
+# VCHAR          = %x21-7E
+# obs-text       = %x80-FF
+# header-field   = field-name ":" OWS field-value OWS
+# field-name     = token
+# field-value    = *( field-content / obs-fold )
+# field-content  = field-vchar [ 1*( SP / HTAB ) field-vchar ]
+# field-vchar    = VCHAR / obs-text
+#
+# obs-fold       = CRLF 1*( SP / HTAB )
+#                ; obsolete line folding
+#                ; see Section 3.2.4
+
+# token          = 1*tchar
+#
+# tchar          = "!" / "#" / "$" / "%" / "&" / "'" / "*"
+#                / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~"
+#                / DIGIT / ALPHA
+#                ; any VCHAR, except delimiters
+#
+# VCHAR defined in http://tools.ietf.org/html/rfc5234#appendix-B.1
+
+# the patterns for both name and value are more leniant than RFC
+# definitions to allow for backwards compatibility
+_is_legal_header_name = re.compile(rb'[^:\s][^:\r\n]*').fullmatch
+_is_illegal_header_value = re.compile(rb'\n(?![ \t])|\r(?![ \t\n])').search
+
+# We always set the Content-Length header for these methods because some
+# servers will otherwise respond with a 411
+_METHODS_EXPECTING_BODY = {'PATCH', 'POST', 'PUT'}
 
 
 class HTTPMessage(email.message.Message):
@@ -318,7 +248,8 @@ class HTTPResponse(io.BufferedIOBase):
         if not line:
             # Presumably, the server closed the connection before
             # sending a valid response.
-            raise BadStatusLine(line)
+            raise RemoteDisconnected("Remote end closed connection without"
+                                     " response")
         try:
             version, status, reason = line.split(None, 2)
         except ValueError:
@@ -457,9 +388,11 @@ class HTTPResponse(io.BufferedIOBase):
         fp.close()
 
     def close(self):
-        super().close() # set "closed" flag
-        if self.fp:
-            self._close_conn()
+        try:
+            super().close() # set "closed" flag
+        finally:
+            if self.fp:
+                self._close_conn()
 
     # These implementations are for the benefit of io.BufferedReader.
 
@@ -789,14 +722,6 @@ class HTTPConnection:
     default_port = HTTP_PORT
     auto_open = 1
     debuglevel = 0
-    # TCP Maximum Segment Size (MSS) is determined by the TCP stack on
-    # a per-connection basis.  There is no simple and efficient
-    # platform independent mechanism for determining the MSS, so
-    # instead a reasonable estimate is chosen.  The getsockopt()
-    # interface using the TCP_MAXSEG parameter may be a suitable
-    # approach on some operating systems. A value of 16KiB is chosen
-    # as a reasonable estimate of the maximum MSS.
-    mss = 16384
 
     def __init__(self, host, port=None, timeout=socket._GLOBAL_DEFAULT_TIMEOUT,
                  source_address=None):
@@ -811,22 +736,37 @@ class HTTPConnection:
         self._tunnel_port = None
         self._tunnel_headers = {}
 
-        self._set_hostport(host, port)
+        (self.host, self.port) = self._get_hostport(host, port)
+
+        # This is stored as an instance variable to allow unit
+        # tests to replace it with a suitable mockup
+        self._create_connection = socket.create_connection
 
     def set_tunnel(self, host, port=None, headers=None):
-        """ Sets up the host and the port for the HTTP CONNECT Tunnelling.
+        """Set up host and port for HTTP CONNECT tunnelling.
 
-        The headers argument should be a mapping of extra HTTP headers
-        to send with the CONNECT request.
+        In a connection that uses HTTP CONNECT tunneling, the host passed to the
+        constructor is used as a proxy server that relays all communication to
+        the endpoint passed to `set_tunnel`. This done by sending an HTTP
+        CONNECT request to the proxy server when the connection is established.
+
+        This method must be called before the HTML connection has been
+        established.
+
+        The headers argument should be a mapping of extra HTTP headers to send
+        with the CONNECT request.
         """
-        self._tunnel_host = host
-        self._tunnel_port = port
+
+        if self.sock:
+            raise RuntimeError("Can't set up tunnel for established connection")
+
+        self._tunnel_host, self._tunnel_port = self._get_hostport(host, port)
         if headers:
             self._tunnel_headers = headers
         else:
             self._tunnel_headers.clear()
 
-    def _set_hostport(self, host, port):
+    def _get_hostport(self, host, port):
         if port is None:
             i = host.rfind(':')
             j = host.rfind(']')         # ipv6 addresses have [...]
@@ -843,15 +783,15 @@ class HTTPConnection:
                 port = self.default_port
             if host and host[0] == '[' and host[-1] == ']':
                 host = host[1:-1]
-        self.host = host
-        self.port = port
+
+        return (host, port)
 
     def set_debuglevel(self, level):
         self.debuglevel = level
 
     def _tunnel(self):
-        self._set_hostport(self._tunnel_host, self._tunnel_port)
-        connect_str = "CONNECT %s:%d HTTP/1.0\r\n" % (self.host, self.port)
+        connect_str = "CONNECT %s:%d HTTP/1.0\r\n" % (self._tunnel_host,
+            self._tunnel_port)
         connect_bytes = connect_str.encode("ascii")
         self.send(connect_bytes)
         for header, value in self._tunnel_headers.items():
@@ -863,7 +803,7 @@ class HTTPConnection:
         response = self.response_class(self.sock, method=self._method)
         (version, code, message) = response._read_status()
 
-        if code != 200:
+        if code != http.HTTPStatus.OK:
             self.close()
             raise OSError("Tunnel connection failed: %d %s" % (code,
                                                                message.strip()))
@@ -877,22 +817,31 @@ class HTTPConnection:
             if line in (b'\r\n', b'\n', b''):
                 break
 
+            if self.debuglevel > 0:
+                print('header:', line.decode())
+
     def connect(self):
         """Connect to the host and port specified in __init__."""
-        self.sock = socket.create_connection((self.host,self.port),
-                                             self.timeout, self.source_address)
+        self.sock = self._create_connection(
+            (self.host,self.port), self.timeout, self.source_address)
+        self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
         if self._tunnel_host:
             self._tunnel()
 
     def close(self):
         """Close the connection to the HTTP server."""
-        if self.sock:
-            self.sock.close()   # close it manually... there may be other refs
-            self.sock = None
-        if self.__response:
-            self.__response.close()
-            self.__response = None
         self.__state = _CS_IDLE
+        try:
+            sock = self.sock
+            if sock:
+                self.sock = None
+                sock.close()   # close it manually... there may be other refs
+        finally:
+            response = self.__response
+            if response:
+                self.__response = None
+                response.close()
 
     def send(self, data):
         """Send `data' to the server.
@@ -958,19 +907,9 @@ class HTTPConnection:
         self._buffer.extend((b"", b""))
         msg = b"\r\n".join(self._buffer)
         del self._buffer[:]
-        # If msg and message_body are sent in a single send() call,
-        # it will avoid performance problems caused by the interaction
-        # between delayed ack and the Nagle algorithm. However,
-        # there is no performance gain if the message is larger
-        # than MSS (and there is a memory penalty for the message
-        # copy).
-        if isinstance(message_body, bytes) and len(message_body) < self.mss:
-            msg += message_body
-            message_body = None
+
         self.send(msg)
         if message_body is not None:
-            # message_body was not a string (i.e. it is a file), and
-            # we must run the risk of Nagle.
             self.send(message_body)
 
     def putrequest(self, method, url, skip_host=0, skip_accept_encoding=0):
@@ -1049,22 +988,29 @@ class HTTPConnection:
                         netloc_enc = netloc.encode("idna")
                     self.putheader('Host', netloc_enc)
                 else:
+                    if self._tunnel_host:
+                        host = self._tunnel_host
+                        port = self._tunnel_port
+                    else:
+                        host = self.host
+                        port = self.port
+
                     try:
-                        host_enc = self.host.encode("ascii")
+                        host_enc = host.encode("ascii")
                     except UnicodeEncodeError:
-                        host_enc = self.host.encode("idna")
+                        host_enc = host.encode("idna")
 
                     # As per RFC 273, IPv6 address should be wrapped with []
                     # when used as Host header
 
-                    if self.host.find(':') >= 0:
+                    if host.find(':') >= 0:
                         host_enc = b'[' + host_enc + b']'
 
-                    if self.port == self.default_port:
+                    if port == self.default_port:
                         self.putheader('Host', host_enc)
                     else:
                         host_enc = host_enc.decode("ascii")
-                        self.putheader('Host', "%s:%s" % (host_enc, self.port))
+                        self.putheader('Host', "%s:%s" % (host_enc, port))
 
             # note: we are assuming that clients will not attempt to set these
             #       headers since *this* library must deal with the
@@ -1099,12 +1045,20 @@ class HTTPConnection:
 
         if hasattr(header, 'encode'):
             header = header.encode('ascii')
+
+        if not _is_legal_header_name(header):
+            raise ValueError('Invalid header name %r' % (header,))
+
         values = list(values)
         for i, one_value in enumerate(values):
             if hasattr(one_value, 'encode'):
                 values[i] = one_value.encode('latin-1')
             elif isinstance(one_value, int):
                 values[i] = str(one_value).encode('ascii')
+
+            if _is_illegal_header_value(values[i]):
+                raise ValueError('Invalid header value %r' % (values[i],))
+
         value = b'\r\n\t'.join(values)
         header = header + b': ' + value
         self._output(header)
@@ -1128,19 +1082,26 @@ class HTTPConnection:
         """Send a complete request to the server."""
         self._send_request(method, url, body, headers)
 
-    def _set_content_length(self, body):
-        # Set the content-length based on the body.
+    def _set_content_length(self, body, method):
+        # Set the content-length based on the body. If the body is "empty", we
+        # set Content-Length: 0 for methods that expect a body (RFC 7230,
+        # Section 3.3.2). If the body is set for other methods, we set the
+        # header provided we can figure out what the length is.
         thelen = None
-        try:
-            thelen = str(len(body))
-        except TypeError as te:
-            # If this is a file-like object, try to
-            # fstat its file descriptor
+        method_expects_body = method.upper() in _METHODS_EXPECTING_BODY
+        if body is None and method_expects_body:
+            thelen = '0'
+        elif body is not None:
             try:
-                thelen = str(os.fstat(body.fileno()).st_size)
-            except (AttributeError, OSError):
-                # Don't send a length if this failed
-                if self.debuglevel > 0: print("Cannot stat!!")
+                thelen = str(len(body))
+            except TypeError:
+                # If this is a file-like object, try to
+                # fstat its file descriptor
+                try:
+                    thelen = str(os.fstat(body.fileno()).st_size)
+                except (AttributeError, OSError):
+                    # Don't send a length if this failed
+                    if self.debuglevel > 0: print("Cannot stat!!")
 
         if thelen is not None:
             self.putheader('Content-Length', thelen)
@@ -1156,8 +1117,8 @@ class HTTPConnection:
 
         self.putrequest(method, url, **skips)
 
-        if body is not None and ('content-length' not in header_names):
-            self._set_content_length(body)
+        if 'content-length' not in header_names:
+            self._set_content_length(body, method)
         for hdr, value in headers.items():
             self.putheader(hdr, value)
         if isinstance(body, str):
@@ -1208,18 +1169,26 @@ class HTTPConnection:
         else:
             response = self.response_class(self.sock, method=self._method)
 
-        response.begin()
-        assert response.will_close != _UNKNOWN
-        self.__state = _CS_IDLE
+        try:
+            try:
+                response.begin()
+            except ConnectionError:
+                self.close()
+                raise
+            assert response.will_close != _UNKNOWN
+            self.__state = _CS_IDLE
 
-        if response.will_close:
-            # this effectively passes the connection to the response
-            self.close()
-        else:
-            # remember this, so we can tell when it is complete
-            self.__response = response
+            if response.will_close:
+                # this effectively passes the connection to the response
+                self.close()
+            else:
+                # remember this, so we can tell when it is complete
+                self.__response = response
 
-        return response
+            return response
+        except:
+            response.close()
+            raise
 
 try:
     import ssl
@@ -1242,11 +1211,11 @@ else:
             self.key_file = key_file
             self.cert_file = cert_file
             if context is None:
-                context = ssl._create_stdlib_context()
+                context = ssl._create_default_https_context()
             will_verify = context.verify_mode != ssl.CERT_NONE
             if check_hostname is None:
-                check_hostname = will_verify
-            elif check_hostname and not will_verify:
+                check_hostname = context.check_hostname
+            if check_hostname and not will_verify:
                 raise ValueError("check_hostname needs a SSL context with "
                                  "either CERT_OPTIONAL or CERT_REQUIRED")
             if key_file or cert_file:
@@ -1257,19 +1226,18 @@ else:
         def connect(self):
             "Connect to a host on a given (SSL) port."
 
-            sock = socket.create_connection((self.host, self.port),
-                                            self.timeout, self.source_address)
+            super().connect()
 
             if self._tunnel_host:
-                self.sock = sock
-                self._tunnel()
+                server_hostname = self._tunnel_host
+            else:
+                server_hostname = self.host
 
-            server_hostname = self.host if ssl.HAS_SNI else None
-            self.sock = self._context.wrap_socket(sock,
+            self.sock = self._context.wrap_socket(self.sock,
                                                   server_hostname=server_hostname)
             if not self._context.check_hostname and self._check_hostname:
                 try:
-                    ssl.match_hostname(self.sock.getpeercert(), self.host)
+                    ssl.match_hostname(self.sock.getpeercert(), server_hostname)
                 except Exception:
                     self.sock.shutdown(socket.SHUT_RDWR)
                     self.sock.close()
@@ -1309,7 +1277,8 @@ class IncompleteRead(HTTPException):
             e = ', %i more expected' % self.expected
         else:
             e = ''
-        return 'IncompleteRead(%i bytes read%s)' % (len(self.partial), e)
+        return '%s(%i bytes read%s)' % (self.__class__.__name__,
+                                        len(self.partial), e)
     def __str__(self):
         return repr(self)
 
@@ -1336,6 +1305,11 @@ class LineTooLong(HTTPException):
     def __init__(self, line_type):
         HTTPException.__init__(self, "got more than %d bytes when reading %s"
                                      % (_MAXLINE, line_type))
+
+class RemoteDisconnected(ConnectionResetError, BadStatusLine):
+    def __init__(self, *pos, **kw):
+        BadStatusLine.__init__(self, "")
+        ConnectionResetError.__init__(self, *pos, **kw)
 
 # for backwards compatibility
 error = HTTPException

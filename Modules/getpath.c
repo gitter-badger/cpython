@@ -131,6 +131,23 @@ static wchar_t exec_prefix[MAXPATHLEN+1];
 static wchar_t progpath[MAXPATHLEN+1];
 static wchar_t *module_search_path = NULL;
 
+/* Get file status. Encode the path to the locale encoding. */
+
+static int
+_Py_wstat(const wchar_t* path, struct stat *buf)
+{
+    int err;
+    char *fname;
+    fname = Py_EncodeLocale(path, NULL);
+    if (fname == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    err = stat(fname, buf);
+    PyMem_Free(fname);
+    return err;
+}
+
 static void
 reduce(wchar_t *dir)
 {
@@ -153,14 +170,14 @@ isfile(wchar_t *filename)          /* Is file, not directory */
 
 
 static int
-ismodule(wchar_t *filename)        /* Is module -- check for .pyc/.pyo too */
+ismodule(wchar_t *filename)        /* Is module -- check for .pyc too */
 {
     if (isfile(filename))
         return 1;
 
     /* Check for the compiled version of prefix. */
     if (wcslen(filename) < MAXPATHLEN) {
-        wcscat(filename, Py_OptimizeFlag ? L"o" : L"c");
+        wcscat(filename, L"c");
         if (isfile(filename))
             return 1;
     }
@@ -336,7 +353,7 @@ search_for_prefix(wchar_t *argv0_path, wchar_t *home, wchar_t *_prefix,
     joinpath(prefix, L"Modules/Setup");
     if (isfile(prefix)) {
         /* Check VPATH to see if argv0_path is in the build directory. */
-        vpath = _Py_char2wchar(VPATH, NULL);
+        vpath = Py_DecodeLocale(VPATH, NULL);
         if (vpath != NULL) {
             wcsncpy(prefix, argv0_path, MAXPATHLEN);
             prefix[MAXPATHLEN] = L'\0';
@@ -491,10 +508,10 @@ calculate_path(void)
     wchar_t *_pythonpath, *_prefix, *_exec_prefix;
     wchar_t *lib_python;
 
-    _pythonpath = _Py_char2wchar(PYTHONPATH, NULL);
-    _prefix = _Py_char2wchar(PREFIX, NULL);
-    _exec_prefix = _Py_char2wchar(EXEC_PREFIX, NULL);
-    lib_python = _Py_char2wchar("lib/python" VERSION, NULL);
+    _pythonpath = Py_DecodeLocale(PYTHONPATH, NULL);
+    _prefix = Py_DecodeLocale(PREFIX, NULL);
+    _exec_prefix = Py_DecodeLocale(EXEC_PREFIX, NULL);
+    lib_python = Py_DecodeLocale("lib/python" VERSION, NULL);
 
     if (!_pythonpath || !_prefix || !_exec_prefix || !lib_python) {
         Py_FatalError(
@@ -503,7 +520,7 @@ calculate_path(void)
     }
 
     if (_path) {
-        path_buffer = _Py_char2wchar(_path, NULL);
+        path_buffer = Py_DecodeLocale(_path, NULL);
         path = path_buffer;
     }
 
@@ -584,7 +601,7 @@ calculate_path(void)
         ** be running the interpreter in the build directory, so we use the
         ** build-directory-specific logic to find Lib and such.
         */
-        wchar_t* wbuf = _Py_char2wchar(modPath, NULL);
+        wchar_t* wbuf = Py_DecodeLocale(modPath, NULL);
         if (wbuf == NULL) {
             Py_FatalError("Cannot decode framework location");
         }
@@ -709,7 +726,7 @@ calculate_path(void)
 
     if (_rtpypath && _rtpypath[0] != '\0') {
         size_t rtpypath_len;
-        rtpypath = _Py_char2wchar(_rtpypath, &rtpypath_len);
+        rtpypath = Py_DecodeLocale(_rtpypath, &rtpypath_len);
         if (rtpypath != NULL)
             bufsz += rtpypath_len + 1;
     }
@@ -735,7 +752,7 @@ calculate_path(void)
     bufsz += wcslen(zip_path) + 1;
     bufsz += wcslen(exec_prefix) + 1;
 
-    buf = (wchar_t *)PyMem_Malloc(bufsz * sizeof(wchar_t));
+    buf = PyMem_New(wchar_t, bufsz);
     if (buf == NULL) {
         Py_FatalError(
             "Not enough memory for dynamic PYTHONPATH");
@@ -874,4 +891,3 @@ Py_GetProgramFullPath(void)
 #ifdef __cplusplus
 }
 #endif
-

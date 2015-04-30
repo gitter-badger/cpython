@@ -707,6 +707,19 @@ class TestNamedTemporaryFile(BaseTestCase):
             # No reference cycle was created.
             self.assertIsNone(wr())
 
+    def test_iter(self):
+        # Issue #23700: getting iterator from a temporary file should keep
+        # it alive as long as it's being iterated over
+        lines = [b'spam\n', b'eggs\n', b'beans\n']
+        def make_file():
+            f = tempfile.NamedTemporaryFile(mode='w+b')
+            f.write(b''.join(lines))
+            f.seek(0)
+            return f
+        for i, l in enumerate(make_file()):
+            self.assertEqual(l, lines[i])
+        self.assertEqual(i, len(lines) - 1)
+
     def test_creates_named(self):
         # NamedTemporaryFile creates files with names
         f = tempfile.NamedTemporaryFile()
@@ -762,8 +775,10 @@ class TestNamedTemporaryFile(BaseTestCase):
     def test_no_leak_fd(self):
         # Issue #21058: don't leak file descriptor when io.open() fails
         closed = []
+        os_close = os.close
         def close(fd):
             closed.append(fd)
+            os_close(fd)
 
         with mock.patch('os.close', side_effect=close):
             with mock.patch('io.open', side_effect=ValueError):
@@ -1076,8 +1091,10 @@ if tempfile.NamedTemporaryFile is not tempfile.TemporaryFile:
         def test_no_leak_fd(self):
             # Issue #21058: don't leak file descriptor when io.open() fails
             closed = []
+            os_close = os.close
             def close(fd):
                 closed.append(fd)
+                os_close(fd)
 
             with mock.patch('os.close', side_effect=close):
                 with mock.patch('io.open', side_effect=ValueError):
@@ -1207,6 +1224,30 @@ class TestTemporaryDirectory(BaseTestCase):
                 self.assertNotIn("Exception ", err)
                 self.assertIn("ResourceWarning: Implicitly cleaning up", err)
 
+    def test_exit_on_shutdown(self):
+        # Issue #22427
+        with self.do_create() as dir:
+            code = """if True:
+                import sys
+                import tempfile
+                import warnings
+
+                def generator():
+                    with tempfile.TemporaryDirectory(dir={dir!r}) as tmp:
+                        yield tmp
+                g = generator()
+                sys.stdout.buffer.write(next(g).encode())
+
+                warnings.filterwarnings("always", category=ResourceWarning)
+                """.format(dir=dir)
+            rc, out, err = script_helper.assert_python_ok("-c", code)
+            tmp_name = out.decode().strip()
+            self.assertFalse(os.path.exists(tmp_name),
+                        "TemporaryDirectory %s exists after cleanup" % tmp_name)
+            err = err.decode('utf-8', 'backslashreplace')
+            self.assertNotIn("Exception ", err)
+            self.assertIn("ResourceWarning: Implicitly cleaning up", err)
+
     def test_warnings_on_cleanup(self):
         # ResourceWarning will be triggered by __del__
         with self.do_create() as dir:
@@ -1237,8 +1278,5 @@ class TestTemporaryDirectory(BaseTestCase):
         self.assertFalse(os.path.exists(name))
 
 
-def test_main():
-    support.run_unittest(__name__)
-
 if __name__ == "__main__":
-    test_main()
+    unittest.main()

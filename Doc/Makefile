@@ -6,22 +6,23 @@
 # You can set these variables from the command line.
 PYTHON       = python
 SPHINXBUILD  = sphinx-build
-SPHINXOPTS   =
 PAPER        =
 SOURCES      =
-DISTVERSION  = $(shell $(PYTHON) tools/sphinxext/patchlevel.py)
+DISTVERSION  = $(shell $(PYTHON) tools/extensions/patchlevel.py)
 
 ALLSPHINXOPTS = -b $(BUILDER) -d build/doctrees -D latex_paper_size=$(PAPER) \
                 $(SPHINXOPTS) . build/$(BUILDER) $(SOURCES)
 
 .PHONY: help build html htmlhelp latex text changes linkcheck \
 	suspicious coverage doctest pydoc-topics htmlview clean dist check serve \
-	autobuild-dev autobuild-stable
+	autobuild-dev autobuild-stable venv
 
 help:
 	@echo "Please use \`make <target>' where <target> is one of"
 	@echo "  clean      to remove build files"
+	@echo "  venv       to create a venv with necessary tools"
 	@echo "  html       to make standalone HTML files"
+	@echo "  htmlview   to open the index page built by the html target in your browser"
 	@echo "  htmlhelp   to make HTML files and a HTML help project"
 	@echo "  latex      to make LaTeX files, you can set PAPER=a4 or PAPER=letter"
 	@echo "  text       to make plain text files"
@@ -68,24 +69,30 @@ changes: build
 	@echo "The overview file is in build/changes."
 
 linkcheck: BUILDER = linkcheck
-linkcheck: build
-	@echo "Link check complete; look for any errors in the above output" \
-	      "or in build/$(BUILDER)/output.txt"
+linkcheck:
+	@$(MAKE) build BUILDER=$(BUILDER) || { \
+	echo "Link check complete; look for any errors in the above output" \
+	     "or in build/$(BUILDER)/output.txt"; \
+	false; }
 
 suspicious: BUILDER = suspicious
-suspicious: build
-	@echo "Suspicious check complete; look for any errors in the above output" \
-	      "or in build/$(BUILDER)/suspicious.csv.  If all issues are false" \
-	      "positives, append that file to tools/sphinxext/susp-ignored.csv."
+suspicious:
+	@$(MAKE) build BUILDER=$(BUILDER) || { \
+	echo "Suspicious check complete; look for any errors in the above output" \
+	     "or in build/$(BUILDER)/suspicious.csv.  If all issues are false" \
+	     "positives, append that file to tools/susp-ignored.csv."; \
+	false; }
 
 coverage: BUILDER = coverage
 coverage: build
 	@echo "Coverage finished; see c.txt and python.txt in build/coverage"
 
 doctest: BUILDER = doctest
-doctest: build
-	@echo "Testing of doctests in the sources finished, look at the" \
-	      "results in build/doctest/output.txt"
+doctest:
+	@$(MAKE) build BUILDER=$(BUILDER) || { \
+	echo "Testing of doctests in the sources finished, look at the" \
+	     "results in build/doctest/output.txt"; \
+	false; }
 
 pydoc-topics: BUILDER = pydoc-topics
 pydoc-topics: build
@@ -96,7 +103,11 @@ htmlview: html
 	 $(PYTHON) -c "import webbrowser; webbrowser.open('build/html/index.html')"
 
 clean:
-	-rm -rf build/*
+	-rm -rf build/* venv/*
+
+venv:
+	$(PYTHON) -m venv venv
+	./venv/bin/python3 -m pip install -U Sphinx
 
 dist:
 	rm -rf dist
@@ -158,11 +169,11 @@ autobuild-dev:
 autobuild-html:
 	make html SPHINXOPTS='-A daily=1 -A versionswitcher=1'
 
-# for stable releases: only build if not in pre-release stage (alpha, beta, rc)
+# for stable releases: only build if not in pre-release stage (alpha, beta)
+# release candidate downloads are okay, since the stable tree can be in that stage
 autobuild-stable:
-	@case $(DISTVERSION) in *[abc]*) \
+	@case $(DISTVERSION) in *[ab]*) \
 		echo "Not building; $(DISTVERSION) is not a release version."; \
 		exit 1;; \
 	esac
 	@make autobuild-dev
-

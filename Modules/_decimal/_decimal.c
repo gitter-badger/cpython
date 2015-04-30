@@ -39,8 +39,8 @@
 #include "memory.h"
 
 
-#if MPD_MAJOR_VERSION != 2
-  #error "libmpdec major version 2 required"
+#if !defined(MPD_VERSION_HEX) || MPD_VERSION_HEX < 0x02040100
+  #error "libmpdec version >= 2.4.1 required"
 #endif
 
 
@@ -3542,7 +3542,7 @@ PyDec_Round(PyObject *dec, PyObject *args)
     }
 }
 
-static PyObject *DecimalTuple = NULL;
+static PyTypeObject *DecimalTuple = NULL;
 /* Return the DecimalTuple representation of a PyDecObject. */
 static PyObject *
 PyDec_AsTuple(PyObject *dec, PyObject *dummy UNUSED)
@@ -3625,7 +3625,7 @@ PyDec_AsTuple(PyObject *dec, PyObject *dummy UNUSED)
         }
     }
 
-    result = PyObject_CallFunctionObjArgs(DecimalTuple,
+    result = PyObject_CallFunctionObjArgs((PyObject *)DecimalTuple,
                                           sign, coeff, expt, NULL);
 
 out:
@@ -5562,9 +5562,14 @@ PyInit__decimal(void)
 
     /* DecimalTuple */
     ASSIGN_PTR(collections, PyImport_ImportModule("collections"));
-    ASSIGN_PTR(DecimalTuple, PyObject_CallMethod(collections,
+    ASSIGN_PTR(DecimalTuple, (PyTypeObject *)PyObject_CallMethod(collections,
                                  "namedtuple", "(ss)", "DecimalTuple",
                                  "sign digits exponent"));
+
+    ASSIGN_PTR(obj, PyUnicode_FromString("decimal"));
+    CHECK_INT(PyDict_SetItemString(DecimalTuple->tp_dict, "__module__", obj));
+    Py_CLEAR(obj);
+
     /* MutableMapping */
     ASSIGN_PTR(MutableMapping, PyObject_GetAttrString(collections,
                                                       "MutableMapping"));
@@ -5591,7 +5596,7 @@ PyInit__decimal(void)
     CHECK_INT(PyModule_AddObject(m, "Context",
                                  (PyObject *)&PyDecContext_Type));
     Py_INCREF(DecimalTuple);
-    CHECK_INT(PyModule_AddObject(m, "DecimalTuple", DecimalTuple));
+    CHECK_INT(PyModule_AddObject(m, "DecimalTuple", (PyObject *)DecimalTuple));
 
 
     /* Create top level exception */
@@ -5635,7 +5640,7 @@ PyInit__decimal(void)
             goto error; /* GCOV_NOT_REACHED */
         }
 
-        ASSIGN_PTR(cm->ex, PyErr_NewException((char *)cm->fqname, base, NULL));
+        ASSIGN_PTR(cm->ex, PyErr_NewException(cm->fqname, base, NULL));
         Py_DECREF(base);
 
         /* add to module */
@@ -5667,7 +5672,7 @@ PyInit__decimal(void)
             goto error; /* GCOV_NOT_REACHED */
         }
 
-        ASSIGN_PTR(cm->ex, PyErr_NewException((char *)cm->fqname, base, NULL));
+        ASSIGN_PTR(cm->ex, PyErr_NewException(cm->fqname, base, NULL));
         Py_DECREF(base);
 
         Py_INCREF(cm->ex);

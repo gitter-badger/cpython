@@ -5,7 +5,7 @@ import tracemalloc
 import unittest
 from unittest.mock import patch
 from test.script_helper import assert_python_ok, assert_python_failure
-from test import support
+from test import script_helper, support
 try:
     import threading
 except ImportError:
@@ -660,11 +660,9 @@ class TestFilters(unittest.TestCase):
         self.assertFalse(fnmatch('abcdd', 'a*c*e'))
         self.assertFalse(fnmatch('abcbdefef', 'a*bd*eg'))
 
-        # replace .pyc and .pyo suffix with .py
+        # replace .pyc suffix with .py
         self.assertTrue(fnmatch('a.pyc', 'a.py'))
-        self.assertTrue(fnmatch('a.pyo', 'a.py'))
         self.assertTrue(fnmatch('a.py', 'a.pyc'))
-        self.assertTrue(fnmatch('a.py', 'a.pyo'))
 
         if os.name == 'nt':
             # case insensitive
@@ -674,7 +672,6 @@ class TestFilters(unittest.TestCase):
             self.assertTrue(fnmatch('a.pyc', 'a.PY'))
             self.assertTrue(fnmatch('a.PYO', 'a.py'))
             self.assertTrue(fnmatch('a.py', 'a.PYC'))
-            self.assertTrue(fnmatch('a.PY', 'a.pyo'))
         else:
             # case sensitive
             self.assertFalse(fnmatch('aBC', 'ABc'))
@@ -683,7 +680,6 @@ class TestFilters(unittest.TestCase):
             self.assertFalse(fnmatch('a.pyc', 'a.PY'))
             self.assertFalse(fnmatch('a.PYO', 'a.py'))
             self.assertFalse(fnmatch('a.py', 'a.PYC'))
-            self.assertFalse(fnmatch('a.PY', 'a.pyo'))
 
         if os.name == 'nt':
             # normalize alternate separator "/" to the standard separator "\"
@@ -748,26 +744,30 @@ class TestFilters(unittest.TestCase):
 
 
 class TestCommandLine(unittest.TestCase):
-    def test_env_var(self):
+    def test_env_var_disabled_by_default(self):
         # not tracing by default
         code = 'import tracemalloc; print(tracemalloc.is_tracing())'
         ok, stdout, stderr = assert_python_ok('-c', code)
         stdout = stdout.rstrip()
         self.assertEqual(stdout, b'False')
 
-        # PYTHON* environment variables must be ignored when -E option is
-        # present
+    @unittest.skipIf(script_helper.interpreter_requires_environment(),
+                     'Cannot run -E tests when PYTHON env vars are required.')
+    def test_env_var_ignored_with_E(self):
+        """PYTHON* environment variables must be ignored when -E is present."""
         code = 'import tracemalloc; print(tracemalloc.is_tracing())'
         ok, stdout, stderr = assert_python_ok('-E', '-c', code, PYTHONTRACEMALLOC='1')
         stdout = stdout.rstrip()
         self.assertEqual(stdout, b'False')
 
+    def test_env_var_enabled_at_startup(self):
         # tracing at startup
         code = 'import tracemalloc; print(tracemalloc.is_tracing())'
         ok, stdout, stderr = assert_python_ok('-c', code, PYTHONTRACEMALLOC='1')
         stdout = stdout.rstrip()
         self.assertEqual(stdout, b'True')
 
+    def test_env_limit(self):
         # start and set the number of frames
         code = 'import tracemalloc; print(tracemalloc.get_traceback_limit())'
         ok, stdout, stderr = assert_python_ok('-c', code, PYTHONTRACEMALLOC='10')
@@ -806,6 +806,12 @@ class TestCommandLine(unittest.TestCase):
                     self.assertIn(b'-X tracemalloc=NFRAME: invalid '
                                   b'number of frames',
                                   stderr)
+
+    def test_pymem_alloc0(self):
+        # Issue #21639: Check that PyMem_Malloc(0) with tracemalloc enabled
+        # does not crash.
+        code = 'import _testcapi; _testcapi.test_pymem_alloc0(); 1'
+        assert_python_ok('-X', 'tracemalloc', '-c', code)
 
 
 def test_main():

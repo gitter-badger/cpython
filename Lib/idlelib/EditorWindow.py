@@ -2,7 +2,7 @@ import importlib
 import importlib.abc
 import importlib.util
 import os
-from platform import python_version
+import platform
 import re
 import string
 import sys
@@ -25,6 +25,8 @@ from idlelib import macosxSupport
 
 # The default tab setting for a Text widget, in average-width characters.
 TK_TABWIDTH_DEFAULT = 8
+
+_py_version = ' (%s)' % platform.python_version()
 
 def _sphinx_version():
     "Format sys.version_info to produce the Sphinx version string used to install the chm docs"
@@ -79,6 +81,8 @@ class HelpDialog(object):
         self.parent = None
 
 helpDialog = HelpDialog()  # singleton instance
+def _help_dialog(parent):  # wrapper for htest
+    helpDialog.show_dialog(parent)
 
 
 class EditorWindow(object):
@@ -120,7 +124,7 @@ class EditorWindow(object):
                     # Safari requires real file:-URLs
                     EditorWindow.help_url = 'file://' + EditorWindow.help_url
             else:
-                EditorWindow.help_url = "http://docs.python.org/%d.%d" % sys.version_info[:2]
+                EditorWindow.help_url = "https://docs.python.org/%d.%d/" % sys.version_info[:2]
         currentTheme=idleConf.CurrentTheme()
         self.flist = flist
         root = root or flist.root
@@ -185,6 +189,8 @@ class EditorWindow(object):
         text.bind("<<python-docs>>", self.python_docs)
         text.bind("<<about-idle>>", self.about_dialog)
         text.bind("<<open-config-dialog>>", self.config_dialog)
+        text.bind("<<open-config-extensions-dialog>>",
+                  self.config_extensions_dialog)
         text.bind("<<open-module>>", self.open_module)
         text.bind("<<do-nothing>>", lambda event: "break")
         text.bind("<<select-all>>", self.select_all)
@@ -220,6 +226,7 @@ class EditorWindow(object):
             text.bind("<<close-all-windows>>", self.flist.close_all_callback)
             text.bind("<<open-class-browser>>", self.open_class_browser)
             text.bind("<<open-path-browser>>", self.open_path_browser)
+            text.bind("<<open-turtle-demo>>", self.open_turtle_demo)
 
         self.set_status_bar()
         vbar['command'] = text.yview
@@ -432,12 +439,9 @@ class EditorWindow(object):
         ("format", "F_ormat"),
         ("run", "_Run"),
         ("options", "_Options"),
-        ("windows", "_Windows"),
+        ("windows", "_Window"),
         ("help", "_Help"),
     ]
-
-    if sys.platform == "darwin":
-        menu_specs[-2] = ("windows", "_Window")
 
 
     def createmenubar(self):
@@ -538,6 +542,8 @@ class EditorWindow(object):
 
     def config_dialog(self, event=None):
         configDialog.ConfigDialog(self.top,'Settings')
+    def config_extensions_dialog(self, event=None):
+        configDialog.ConfigExtensionsDialog(self.top)
 
     def help_dialog(self, event=None):
         if self.root:
@@ -684,16 +690,15 @@ class EditorWindow(object):
             self.flist.open(file_path)
         else:
             self.io.loadfile(file_path)
+        return file_path
 
     def open_class_browser(self, event=None):
         filename = self.io.filename
-        if not filename:
-            tkMessageBox.showerror(
-                "No filename",
-                "This buffer has no associated filename",
-                master=self.text)
-            self.text.focus_set()
-            return None
+        if not (self.__class__.__name__ == 'PyShellEditorWindow'
+                and filename):
+            filename = self.open_module()
+            if filename is None:
+                return
         head, tail = os.path.split(filename)
         base, ext = os.path.splitext(tail)
         from idlelib import ClassBrowser
@@ -702,6 +707,14 @@ class EditorWindow(object):
     def open_path_browser(self, event=None):
         from idlelib import PathBrowser
         PathBrowser.PathBrowser(self.flist)
+
+    def open_turtle_demo(self, event = None):
+        import subprocess
+
+        cmd = [sys.executable,
+               '-c',
+               'from turtledemo.__main__ import main; main()']
+        p = subprocess.Popen(cmd, shell=False)
 
     def gotoline(self, lineno):
         if lineno is not None and lineno > 0:
@@ -753,7 +766,7 @@ class EditorWindow(object):
         self.color = None
 
     def ResetColorizer(self):
-        "Update the colour theme"
+        "Update the color theme"
         # Called from self.filename_change_hook and from configDialog.py
         self._rmcolorizer()
         self._addcolorizer()
@@ -933,7 +946,7 @@ class EditorWindow(object):
         short = self.short_title()
         long = self.long_title()
         if short and long:
-            title = short + " - " + long
+            title = short + " - " + long + _py_version
         elif short:
             title = short
         elif long:
@@ -957,14 +970,13 @@ class EditorWindow(object):
         self.undo.reset_undo()
 
     def short_title(self):
-        pyversion = "Python " + python_version() + ": "
         filename = self.io.filename
         if filename:
             filename = os.path.basename(filename)
         else:
             filename = "Untitled"
         # return unicode string to display non-ASCII chars correctly
-        return pyversion + self._filename_to_unicode(filename)
+        return self._filename_to_unicode(filename)
 
     def long_title(self):
         # return unicode string to display non-ASCII chars correctly
@@ -1064,7 +1076,7 @@ class EditorWindow(object):
         try:
             try:
                 mod = importlib.import_module('.' + name, package=__package__)
-            except ImportError:
+            except (ImportError, TypeError):
                 mod = importlib.import_module(name)
         except ImportError:
             print("\nFailed to import extension: ", name)
@@ -1700,19 +1712,20 @@ def fixwordbreaks(root):
     tk.call('set', 'tcl_nonwordchars', '[^a-zA-Z0-9_]')
 
 
-def test():
-    root = Tk()
+def _editor_window(parent):  # htest #
+    # error if close master window first - timer event, after script
+    root = parent
     fixwordbreaks(root)
-    root.withdraw()
     if sys.argv[1:]:
         filename = sys.argv[1]
     else:
         filename = None
+    macosxSupport.setupApp(root, None)
     edit = EditorWindow(root=root, filename=filename)
-    edit.set_close_hook(root.quit)
     edit.text.bind("<<close-all-windows>>", edit.close_event)
-    root.mainloop()
-    root.destroy()
+    # Does not stop error, neither does following
+    # edit.text.bind("<<close-window>>", edit.close_event)
 
 if __name__ == '__main__':
-    test()
+    from idlelib.idle_test.htest import run
+    run(_help_dialog, _editor_window)

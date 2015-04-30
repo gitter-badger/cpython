@@ -318,6 +318,9 @@ The :mod:`signal` module defines the following functions:
    attempting to call it from other threads will cause a :exc:`ValueError`
    exception to be raised.
 
+   .. versionchanged:: 3.5
+      On Windows, the function now also supports socket handles.
+
 
 .. function:: siginterrupt(signalnum, flag)
 
@@ -405,6 +408,11 @@ The :mod:`signal` module defines the following functions:
 
    .. versionadded:: 3.3
 
+   .. versionchanged:: 3.5
+      The function is now retried if interrupted by a signal not in *sigset*
+      and the signal handler does not raise an exception (see :pep:`475` for
+      the rationale).
+
 
 .. function:: sigtimedwait(sigset, timeout)
 
@@ -418,6 +426,11 @@ The :mod:`signal` module defines the following functions:
    See also :func:`pause`, :func:`sigwait` and :func:`sigwaitinfo`.
 
    .. versionadded:: 3.3
+
+   .. versionchanged:: 3.5
+      The function is now retried with the recomputed *timeout* if interrupted
+      by a signal not in *sigset* and the signal handler does not raise an
+      exception (see :pep:`475` for the rationale).
 
 
 .. _signal-example:

@@ -10,6 +10,8 @@ import email.message
 import time
 
 
+support.requires('network')
+
 class URLTimeoutTest(unittest.TestCase):
     # XXX this test doesn't seem to test anything useful.
 
@@ -89,7 +91,8 @@ class urlopenNetworkTests(unittest.TestCase):
         # test getcode() with the fancy opener to get 404 error codes
         URL = "http://www.example.com/XXXinvalidXXX"
         with support.transient_internet(URL):
-            open_url = urllib.request.FancyURLopener().open(URL)
+            with self.assertWarns(DeprecationWarning):
+                open_url = urllib.request.FancyURLopener().open(URL)
             try:
                 code = open_url.getcode()
             finally:
@@ -206,11 +209,5 @@ class urlretrieveNetworkTests(unittest.TestCase):
                                 " >= total size in %s" % records_repr)
 
 
-def test_main():
-    support.requires('network')
-    support.run_unittest(URLTimeoutTest,
-                         urlopenNetworkTests,
-                         urlretrieveNetworkTests)
-
 if __name__ == "__main__":
-    test_main()
+    unittest.main()

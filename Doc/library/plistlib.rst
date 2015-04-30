@@ -37,7 +37,7 @@ or :class:`datetime.datetime` objects.
 
 .. seealso::
 
-   `PList manual page <http://developer.apple.com/documentation/Darwin/Reference/ManPages/man5/plist.5.html>`_
+   `PList manual page <https://developer.apple.com/library/mac/documentation/Darwin/Reference/ManPages/man5/plist.5.html>`_
       Apple's documentation of the file format.
 
 
@@ -129,7 +129,7 @@ The following functions are deprecated:
    and binary) file object. Returns the unpacked root object (which usually
    is a dictionary).
 
-   This function calls :func:`load` to do the actual work, the the documentation
+   This function calls :func:`load` to do the actual work, see the documentation
    of :func:`that function <load>` for an explanation of the keyword arguments.
 
    .. note::

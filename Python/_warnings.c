@@ -12,6 +12,7 @@ MODULE_NAME " provides basic warning filtering support.\n"
 static PyObject *_filters;  /* List */
 static PyObject *_once_registry;  /* Dict */
 static PyObject *_default_action; /* String */
+static long _filters_version;
 
 _Py_IDENTIFIER(argv);
 _Py_IDENTIFIER(stderr);
@@ -178,16 +179,33 @@ get_filter(PyObject *category, PyObject *text, Py_ssize_t lineno,
 static int
 already_warned(PyObject *registry, PyObject *key, int should_set)
 {
-    PyObject *already_warned;
+    PyObject *version_obj, *already_warned;
+    _Py_IDENTIFIER(version);
 
     if (key == NULL)
         return -1;
 
-    already_warned = PyDict_GetItem(registry, key);
-    if (already_warned != NULL) {
-        int rc = PyObject_IsTrue(already_warned);
-        if (rc != 0)
-            return rc;
+    version_obj = _PyDict_GetItemId(registry, &PyId_version);
+    if (version_obj == NULL
+        || !PyLong_CheckExact(version_obj)
+        || PyLong_AsLong(version_obj) != _filters_version) {
+        PyDict_Clear(registry);
+        version_obj = PyLong_FromLong(_filters_version);
+        if (version_obj == NULL)
+            return -1;
+        if (_PyDict_SetItemId(registry, &PyId_version, version_obj) < 0) {
+            Py_DECREF(version_obj);
+            return -1;
+        }
+        Py_DECREF(version_obj);
+    }
+    else {
+        already_warned = PyDict_GetItem(registry, key);
+        if (already_warned != NULL) {
+            int rc = PyObject_IsTrue(already_warned);
+            if (rc != 0)
+                return rc;
+        }
     }
 
     /* This warning wasn't found in the registry, set it. */
@@ -545,13 +563,12 @@ setup_context(Py_ssize_t stack_level, PyObject **filename, int *lineno,
         data = PyUnicode_DATA(*filename);
 
 #define ascii_lower(c) ((c <= 127) ? Py_TOLOWER(c) : 0)
-        /* if filename.lower().endswith((".pyc", ".pyo")): */
+        /* if filename.lower().endswith(".pyc"): */
         if (len >= 4 &&
             PyUnicode_READ(kind, data, len-4) == '.' &&
             ascii_lower(PyUnicode_READ(kind, data, len-3)) == 'p' &&
             ascii_lower(PyUnicode_READ(kind, data, len-2)) == 'y' &&
-            (ascii_lower(PyUnicode_READ(kind, data, len-1)) == 'c' ||
-                ascii_lower(PyUnicode_READ(kind, data, len-1)) == 'o'))
+            ascii_lower(PyUnicode_READ(kind, data, len-1)) == 'c')
         {
             *filename = PyUnicode_Substring(*filename, 0,
                                             PyUnicode_GET_LENGTH(*filename)-1);
@@ -619,16 +636,17 @@ get_category(PyObject *message, PyObject *category)
 
     if (rc == 1)
         category = (PyObject*)message->ob_type;
-    else if (category == NULL)
+    else if (category == NULL || category == Py_None)
         category = PyExc_UserWarning;
 
     /* Validate category. */
     rc = PyObject_IsSubclass(category, PyExc_Warning);
-    if (rc == -1)
-        return NULL;
-    if (rc == 0) {
-        PyErr_SetString(PyExc_ValueError,
-                        "category is not a subclass of Warning");
+    /* category is not a subclass of PyExc_Warning or
+       PyObject_IsSubclass raised an error */
+    if (rc == -1 || rc == 0) {
+        PyErr_Format(PyExc_TypeError,
+                     "category must be a Warning subclass, not '%s'",
+                     Py_TYPE(category)->tp_name);
         return NULL;
     }
 
@@ -748,6 +766,13 @@ warnings_warn_explicit(PyObject *self, PyObject *args, PyObject *kwds)
  standard_call:
     return warn_explicit(category, message, filename, lineno, module,
                          registry, NULL);
+}
+
+static PyObject *
+warnings_filters_mutated(PyObject *self, PyObject *args)
+{
+    _filters_version++;
+    Py_RETURN_NONE;
 }
 
 
@@ -917,6 +942,8 @@ static PyMethodDef warnings_functions[] = {
         warn_doc},
     {"warn_explicit", (PyCFunction)warnings_warn_explicit,
         METH_VARARGS | METH_KEYWORDS, warn_explicit_doc},
+    {"_filters_mutated", (PyCFunction)warnings_filters_mutated, METH_NOARGS,
+        NULL},
     /* XXX(brett.cannon): add showwarning? */
     /* XXX(brett.cannon): Reasonable to add formatwarning? */
     {NULL, NULL}                /* sentinel */
@@ -1069,5 +1096,7 @@ _PyWarnings_Init(void)
     Py_INCREF(_default_action);
     if (PyModule_AddObject(m, "_defaultaction", _default_action) < 0)
         return NULL;
+
+    _filters_version = 0;
     return m;
 }

@@ -107,8 +107,9 @@ Sequence Protocol
 
 .. c:function:: PyObject* PySequence_List(PyObject *o)
 
-   Return a list object with the same contents as the arbitrary sequence *o*.  The
-   returned list is guaranteed to be new.
+   Return a list object with the same contents as the sequence or iterable *o*,
+   or *NULL* on failure.  The returned list is guaranteed to be new.  This is
+   equivalent to the Python expression ``list(o)``.
 
 
 .. c:function:: PyObject* PySequence_Tuple(PyObject *o)
@@ -123,10 +124,10 @@ Sequence Protocol
 
 .. c:function:: PyObject* PySequence_Fast(PyObject *o, const char *m)
 
-   Returns the sequence *o* as a tuple, unless it is already a tuple or list, in
-   which case *o* is returned.  Use :c:func:`PySequence_Fast_GET_ITEM` to access the
-   members of the result.  Returns *NULL* on failure.  If the object is not a
-   sequence, raises :exc:`TypeError` with *m* as the message text.
+   Return the sequence *o* as a list, unless it is already a tuple or list, in
+   which case *o* is returned.  Use :c:func:`PySequence_Fast_GET_ITEM` to access
+   the members of the result.  Returns *NULL* on failure.  If the object is not
+   a sequence, raises :exc:`TypeError` with *m* as the message text.
 
 
 .. c:function:: PyObject* PySequence_Fast_GET_ITEM(PyObject *o, Py_ssize_t i)

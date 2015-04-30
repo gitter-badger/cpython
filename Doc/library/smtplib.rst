@@ -32,7 +32,8 @@ Protocol) and :rfc:`1869` (SMTP Service Extensions).
    than a success code, an :exc:`SMTPConnectError` is raised. The optional
    *timeout* parameter specifies a timeout in seconds for blocking operations
    like the connection attempt (if not specified, the global default timeout
-   setting will be used). The optional source_address parameter allows to bind
+   setting will be used).  If the timeout expires, :exc:`socket.timeout` is
+   raised.  The optional source_address parameter allows to bind
    to some specific source address in a machine with multiple network
    interfaces, and/or to some specific source TCP port. It takes a 2-tuple
    (host, port), for the socket to bind to as its source address before
@@ -188,8 +189,12 @@ An :class:`SMTP` instance has the following methods:
 
 .. method:: SMTP.set_debuglevel(level)
 
-   Set the debug output level.  A true value for *level* results in debug messages
-   for connection and for all messages sent to and received from the server.
+   Set the debug output level.  A value of 1 or ``True`` for *level* results in
+   debug messages for connection and for all messages sent to and received from
+   the server.  A value of 2 for *level* results in these messages being
+   timestamped.
+
+   .. versionchanged:: 3.5 Added debuglevel 2.
 
 
 .. method:: SMTP.docmd(cmd, args='')
@@ -239,8 +244,7 @@ An :class:`SMTP` instance has the following methods:
    the server is stored as the :attr:`ehlo_resp` attribute, :attr:`does_esmtp`
    is set to true or false depending on whether the server supports ESMTP, and
    :attr:`esmtp_features` will be a dictionary containing the names of the
-   SMTP service extensions this server supports, and their
-   parameters (if any).
+   SMTP service extensions this server supports, and their parameters (if any).
 
    Unless you wish to use :meth:`has_extn` before sending mail, it should not be
    necessary to call this method explicitly.  It will be implicitly called by
@@ -289,6 +293,42 @@ An :class:`SMTP` instance has the following methods:
 
    :exc:`SMTPException`
       No suitable authentication method was found.
+
+   Each of the authentication methods supported by :mod:`smtplib` are tried in
+   turn if they are advertised as supported by the server (see :meth:`auth`
+   for a list of supported authentication methods).
+
+
+.. method:: SMTP.auth(mechanism, authobject)
+
+   Issue an ``SMTP`` ``AUTH`` command for the specified authentication
+   *mechanism*, and handle the challenge response via *authobject*.
+
+   *mechanism* specifies which authentication mechanism is to
+   be used as argument to the ``AUTH`` command; the valid values are
+   those listed in the ``auth`` element of :attr:`esmtp_features`.
+
+   *authobject* must be a callable object taking a single argument:
+
+     data = authobject(challenge)
+
+   It will be called to process the server's challenge response; the
+   *challenge* argument it is passed will be a ``bytes``.  It should return
+   ``bytes`` *data* that will be base64 encoded and sent to the server.
+
+   The ``SMTP`` class provides ``authobjects`` for the ``CRAM-MD5``, ``PLAIN``,
+   and ``LOGIN`` mechanisms; they are named ``SMTP.auth_cram_md5``,
+   ``SMTP.auth_plain``, and ``SMTP.auth_login`` respectively.  They all require
+   that the ``user`` and ``password`` properties of the ``SMTP`` instance are
+   set to appropriate values.
+
+   User code does not normally need to call ``auth`` directly, but can instead
+   call the :meth:`login` method, which will try each of the above mechanisms in
+   turn, in the order listed.  ``auth`` is exposed to facilitate the
+   implementation of authentication methods not (or not yet) supported directly
+   by :mod:`smtplib`.
+
+   .. versionadded:: 3.5
 
 
 .. method:: SMTP.starttls(keyfile=None, certfile=None, context=None)

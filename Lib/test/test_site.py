@@ -147,7 +147,7 @@ class HelperFunctionsTests(unittest.TestCase):
             re.escape(os.path.join(pth_dir, pth_fn)))
         # XXX: ditto previous XXX comment.
         self.assertRegex(err_out.getvalue(), 'Traceback')
-        self.assertRegex(err_out.getvalue(), 'TypeError')
+        self.assertRegex(err_out.getvalue(), 'ValueError')
 
     def test_addsitedir(self):
         # Same tests for test_addpackage since addsitedir() essentially just
@@ -235,20 +235,18 @@ class HelperFunctionsTests(unittest.TestCase):
             # OS X framework builds
             site.PREFIXES = ['Python.framework']
             dirs = site.getsitepackages()
-            self.assertEqual(len(dirs), 3)
+            self.assertEqual(len(dirs), 2)
             wanted = os.path.join('/Library',
                                   sysconfig.get_config_var("PYTHONFRAMEWORK"),
                                   sys.version[:3],
                                   'site-packages')
-            self.assertEqual(dirs[2], wanted)
+            self.assertEqual(dirs[1], wanted)
         elif os.sep == '/':
             # OS X non-framwework builds, Linux, FreeBSD, etc
-            self.assertEqual(len(dirs), 2)
+            self.assertEqual(len(dirs), 1)
             wanted = os.path.join('xoxo', 'lib', 'python' + sys.version[:3],
                                   'site-packages')
             self.assertEqual(dirs[0], wanted)
-            wanted = os.path.join('xoxo', 'lib', 'site-python')
-            self.assertEqual(dirs[1], wanted)
         else:
             # other platforms
             self.assertEqual(len(dirs), 2)
@@ -412,6 +410,7 @@ class ImportSideEffectTests(unittest.TestCase):
                 self.fail("sitecustomize not imported automatically")
 
     @test.support.requires_resource('network')
+    @test.support.system_must_validate_cert
     @unittest.skipUnless(sys.version_info[3] == 'final',
                          'only for released versions')
     @unittest.skipUnless(hasattr(urllib.request, "HTTPSHandler"),
@@ -459,7 +458,8 @@ class StartupImportTests(unittest.TestCase):
         # http://bugs.python.org/issue19218>
         collection_mods = {'_collections', 'collections', 'functools',
                            'heapq', 'itertools', 'keyword', 'operator',
-                           'reprlib', 'types', 'weakref'}
+                           'reprlib', 'types', 'weakref'
+                          }.difference(sys.builtin_module_names)
         self.assertFalse(modules.intersection(collection_mods), stderr)
 
 

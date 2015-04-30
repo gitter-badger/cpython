@@ -6,6 +6,7 @@ from test import support
 import os
 import io
 import struct
+import array
 gzip = support.import_module('gzip')
 
 data1 = b"""  int length=DEFAULTALLOC, err = Z_OK;
@@ -43,6 +44,14 @@ class BaseTest(unittest.TestCase):
 
 
 class TestGzip(BaseTest):
+    def write_and_read_back(self, data, mode='b'):
+        b_data = bytes(data)
+        with gzip.GzipFile(self.filename, 'w'+mode) as f:
+            l = f.write(data)
+        self.assertEqual(l, len(b_data))
+        with gzip.GzipFile(self.filename, 'r'+mode) as f:
+            self.assertEqual(f.read(), b_data)
+
     def test_write(self):
         with gzip.GzipFile(self.filename, 'wb') as f:
             f.write(data1 * 50)
@@ -56,6 +65,34 @@ class TestGzip(BaseTest):
 
         # Test multiple close() calls.
         f.close()
+
+    # The following test_write_xy methods test that write accepts
+    # the corresponding bytes-like object type as input
+    # and that the data written equals bytes(xy) in all cases.
+    def test_write_memoryview(self):
+        self.write_and_read_back(memoryview(data1 * 50))
+        m = memoryview(bytes(range(256)))
+        data = m.cast('B', shape=[8,8,4])
+        self.write_and_read_back(data)
+
+    def test_write_bytearray(self):
+        self.write_and_read_back(bytearray(data1 * 50))
+
+    def test_write_array(self):
+        self.write_and_read_back(array.array('I', data1 * 40))
+
+    def test_write_incompatible_type(self):
+        # Test that non-bytes-like types raise TypeError.
+        # Issue #21560: attempts to write incompatible types
+        # should not affect the state of the fileobject
+        with gzip.GzipFile(self.filename, 'wb') as f:
+            with self.assertRaises(TypeError):
+                f.write('')
+            with self.assertRaises(TypeError):
+                f.write([])
+            f.write(data1)
+        with gzip.GzipFile(self.filename, 'rb') as f:
+            self.assertEqual(f.read(), data1)
 
     def test_read(self):
         self.test_write()
@@ -86,7 +123,10 @@ class TestGzip(BaseTest):
         # Write to a file, open it for reading, then close it.
         self.test_write()
         f = gzip.GzipFile(self.filename, 'r')
+        fileobj = f.fileobj
+        self.assertFalse(fileobj.closed)
         f.close()
+        self.assertTrue(fileobj.closed)
         with self.assertRaises(ValueError):
             f.read(1)
         with self.assertRaises(ValueError):
@@ -95,7 +135,10 @@ class TestGzip(BaseTest):
             f.tell()
         # Open the file for writing, then close it.
         f = gzip.GzipFile(self.filename, 'w')
+        fileobj = f.fileobj
+        self.assertFalse(fileobj.closed)
         f.close()
+        self.assertTrue(fileobj.closed)
         with self.assertRaises(ValueError):
             f.write(b'')
         with self.assertRaises(ValueError):
@@ -234,9 +277,10 @@ class TestGzip(BaseTest):
         with gzip.GzipFile(self.filename, 'w', mtime = mtime) as fWrite:
             fWrite.write(data1)
         with gzip.GzipFile(self.filename) as fRead:
+            self.assertTrue(hasattr(fRead, 'mtime'))
+            self.assertIsNone(fRead.mtime)
             dataRead = fRead.read()
             self.assertEqual(dataRead, data1)
-            self.assertTrue(hasattr(fRead, 'mtime'))
             self.assertEqual(fRead.mtime, mtime)
 
     def test_metadata(self):
@@ -379,6 +423,18 @@ class TestGzip(BaseTest):
         with gzip.GzipFile(str_filename, "rb") as f:
             self.assertEqual(f.read(), data1 * 50)
 
+    def test_decompress_limited(self):
+        """Decompressed data buffering should be limited"""
+        bomb = gzip.compress(bytes(int(2e6)), compresslevel=9)
+        self.assertLess(len(bomb), io.DEFAULT_BUFFER_SIZE)
+
+        bomb = io.BytesIO(bomb)
+        decomp = gzip.GzipFile(fileobj=bomb)
+        self.assertEqual(bytes(1), decomp.read(1))
+        max_decomp = 1 + io.DEFAULT_BUFFER_SIZE
+        self.assertLessEqual(decomp._buffer.raw.tell(), max_decomp,
+            "Excessive amount of data was decompressed")
+
     # Testing compress/decompress shortcut functions
 
     def test_compress(self):
@@ -426,7 +482,7 @@ class TestGzip(BaseTest):
         with gzip.open(self.filename, "wb") as f:
             f.write(data1)
         with gzip.open(self.filename, "rb") as f:
-            f.fileobj.prepend()
+            f._buffer.raw._fp.prepend()
 
 class TestOpen(BaseTest):
     def test_binary_modes(self):

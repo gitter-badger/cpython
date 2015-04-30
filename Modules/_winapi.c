@@ -40,6 +40,7 @@
 #define WINDOWS_LEAN_AND_MEAN
 #include "windows.h"
 #include <crtdbg.h>
+#include "winreparse.h"
 
 #if defined(MS_WIN32) && !defined(MS_WIN64)
 #define HANDLE_TO_PYNUM(handle) \
@@ -401,6 +402,140 @@ winapi_CreateFile(PyObject *self, PyObject *args)
 }
 
 static PyObject *
+winapi_CreateJunction(PyObject *self, PyObject *args)
+{
+    /* Input arguments */
+    LPWSTR src_path = NULL;
+    LPWSTR dst_path = NULL;
+
+    /* Privilege adjustment */
+    HANDLE token = NULL;
+    TOKEN_PRIVILEGES tp;
+
+    /* Reparse data buffer */
+    const USHORT prefix_len = 4;
+    USHORT print_len = 0;
+    USHORT rdb_size = 0;
+    PREPARSE_DATA_BUFFER rdb = NULL;
+
+    /* Junction point creation */
+    HANDLE junction = NULL;
+    DWORD ret = 0;
+
+    if (!PyArg_ParseTuple(args, "uu", &src_path, &dst_path))
+        return NULL;
+
+    if (src_path == NULL || dst_path == NULL)
+        return PyErr_SetFromWindowsErr(ERROR_INVALID_PARAMETER);
+
+    if (wcsncmp(src_path, L"\\??\\", prefix_len) == 0)
+        return PyErr_SetFromWindowsErr(ERROR_INVALID_PARAMETER);
+
+    /* Adjust privileges to allow rewriting directory entry as a
+       junction point. */
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES, &token))
+        goto cleanup;
+
+    if (!LookupPrivilegeValue(NULL, SE_RESTORE_NAME, &tp.Privileges[0].Luid))
+        goto cleanup;
+
+    tp.PrivilegeCount = 1;
+    tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+    if (!AdjustTokenPrivileges(token, FALSE, &tp, sizeof(TOKEN_PRIVILEGES),
+                               NULL, NULL))
+        goto cleanup;
+
+    if (GetFileAttributesW(src_path) == INVALID_FILE_ATTRIBUTES)
+        goto cleanup;
+
+    /* Store the absolute link target path length in print_len. */
+    print_len = (USHORT)GetFullPathNameW(src_path, 0, NULL, NULL);
+    if (print_len == 0)
+        goto cleanup;
+
+    /* NUL terminator should not be part of print_len. */
+    --print_len;
+
+    /* REPARSE_DATA_BUFFER usage is heavily under-documented, especially for
+       junction points. Here's what I've learned along the way:
+       - A junction point has two components: a print name and a substitute
+         name. They both describe the link target, but the substitute name is
+         the physical target and the print name is shown in directory listings.
+       - The print name must be a native name, prefixed with "\??\".
+       - Both names are stored after each other in the same buffer (the
+         PathBuffer) and both must be NUL-terminated.
+       - There are four members defining their respective offset and length
+         inside PathBuffer: SubstituteNameOffset, SubstituteNameLength,
+         PrintNameOffset and PrintNameLength.
+       - The total size we need to allocate for the REPARSE_DATA_BUFFER, thus,
+         is the sum of:
+         - the fixed header size (REPARSE_DATA_BUFFER_HEADER_SIZE)
+         - the size of the MountPointReparseBuffer member without the PathBuffer
+         - the size of the prefix ("\??\") in bytes
+         - the size of the print name in bytes
+         - the size of the substitute name in bytes
+         - the size of two NUL terminators in bytes */
+    rdb_size = REPARSE_DATA_BUFFER_HEADER_SIZE +
+        sizeof(rdb->MountPointReparseBuffer) -
+        sizeof(rdb->MountPointReparseBuffer.PathBuffer) +
+        /* Two +1's for NUL terminators. */
+        (prefix_len + print_len + 1 + print_len + 1) * sizeof(WCHAR);
+    rdb = (PREPARSE_DATA_BUFFER)PyMem_RawMalloc(rdb_size);
+    if (rdb == NULL)
+        goto cleanup;
+
+    memset(rdb, 0, rdb_size);
+    rdb->ReparseTag = IO_REPARSE_TAG_MOUNT_POINT;
+    rdb->ReparseDataLength = rdb_size - REPARSE_DATA_BUFFER_HEADER_SIZE;
+    rdb->MountPointReparseBuffer.SubstituteNameOffset = 0;
+    rdb->MountPointReparseBuffer.SubstituteNameLength =
+        (prefix_len + print_len) * sizeof(WCHAR);
+    rdb->MountPointReparseBuffer.PrintNameOffset =
+        rdb->MountPointReparseBuffer.SubstituteNameLength + sizeof(WCHAR);
+    rdb->MountPointReparseBuffer.PrintNameLength = print_len * sizeof(WCHAR);
+
+    /* Store the full native path of link target at the substitute name
+       offset (0). */
+    wcscpy(rdb->MountPointReparseBuffer.PathBuffer, L"\\??\\");
+    if (GetFullPathNameW(src_path, print_len + 1,
+                         rdb->MountPointReparseBuffer.PathBuffer + prefix_len,
+                         NULL) == 0)
+        goto cleanup;
+
+    /* Copy everything but the native prefix to the print name offset. */
+    wcscpy(rdb->MountPointReparseBuffer.PathBuffer +
+             prefix_len + print_len + 1,
+             rdb->MountPointReparseBuffer.PathBuffer + prefix_len);
+
+    /* Create a directory for the junction point. */
+    if (!CreateDirectoryW(dst_path, NULL))
+        goto cleanup;
+
+    junction = CreateFileW(dst_path, GENERIC_READ | GENERIC_WRITE, 0, NULL,
+        OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    if (junction == INVALID_HANDLE_VALUE)
+        goto cleanup;
+
+    /* Make the directory entry a junction point. */
+    if (!DeviceIoControl(junction, FSCTL_SET_REPARSE_POINT, rdb, rdb_size,
+                         NULL, 0, &ret, NULL))
+        goto cleanup;
+
+cleanup:
+    ret = GetLastError();
+
+    CloseHandle(token);
+    CloseHandle(junction);
+    PyMem_RawFree(rdb);
+
+    if (ret != 0)
+        return PyErr_SetFromWindowsErr(ret);
+
+    Py_RETURN_NONE;
+}
+
+static PyObject *
 winapi_CreateNamedPipe(PyObject *self, PyObject *args)
 {
     LPCTSTR lpName;
@@ -535,13 +670,23 @@ getenvironment(PyObject* environment)
                 "environment can only contain strings");
             goto error;
         }
+        if (totalsize > PY_SSIZE_T_MAX - PyUnicode_GET_LENGTH(key) - 1) {
+            PyErr_SetString(PyExc_OverflowError, "environment too long");
+            goto error;
+        }
         totalsize += PyUnicode_GET_LENGTH(key) + 1;    /* +1 for '=' */
+        if (totalsize > PY_SSIZE_T_MAX - PyUnicode_GET_LENGTH(value) - 1) {
+            PyErr_SetString(PyExc_OverflowError, "environment too long");
+            goto error;
+        }
         totalsize += PyUnicode_GET_LENGTH(value) + 1;  /* +1 for '\0' */
     }
 
-    buffer = PyMem_Malloc(totalsize * sizeof(Py_UCS4));
-    if (! buffer)
+    buffer = PyMem_NEW(Py_UCS4, totalsize);
+    if (! buffer) {
+        PyErr_NoMemory();
         goto error;
+    }
     p = buffer;
     end = buffer + totalsize;
 
@@ -856,6 +1001,12 @@ PyDoc_STRVAR(GetVersion_doc,
 \n\
 Return the version number of the current operating system.");
 
+/* Disable deprecation warnings about GetVersionEx as the result is
+   being passed straight through to the caller, who is responsible for
+   using it correctly. */
+#pragma warning(push)
+#pragma warning(disable:4996)
+
 static PyObject *
 winapi_GetVersion(PyObject* self, PyObject* args)
 {
@@ -864,6 +1015,8 @@ winapi_GetVersion(PyObject* self, PyObject* args)
 
     return PyLong_FromUnsignedLong(GetVersion());
 }
+
+#pragma warning(pop)
 
 static PyObject *
 winapi_OpenProcess(PyObject *self, PyObject *args)
@@ -1224,6 +1377,8 @@ static PyMethodDef winapi_functions[] = {
     {"ConnectNamedPipe", (PyCFunction)winapi_ConnectNamedPipe,
      METH_VARARGS | METH_KEYWORDS, ""},
     {"CreateFile", winapi_CreateFile, METH_VARARGS,
+     ""},
+    {"CreateJunction", winapi_CreateJunction, METH_VARARGS,
      ""},
     {"CreateNamedPipe", winapi_CreateNamedPipe, METH_VARARGS,
      ""},

@@ -9,6 +9,7 @@ from test import support
 import io
 import _pyio as pyio
 import pickle
+import sys
 
 class MemorySeekTestMixin:
 
@@ -366,13 +367,14 @@ class MemoryTestMixin:
         # the module-level.
         import __main__
         PickleTestMemIO.__module__ = '__main__'
+        PickleTestMemIO.__qualname__ = PickleTestMemIO.__name__
         __main__.PickleTestMemIO = PickleTestMemIO
         submemio = PickleTestMemIO(buf, 80)
         submemio.seek(2)
 
         # We only support pickle protocol 2 and onward since we use extended
         # __reduce__ API of PEP 307 to provide pickling support.
-        for proto in range(2, pickle.HIGHEST_PROTOCOL):
+        for proto in range(2, pickle.HIGHEST_PROTOCOL + 1):
             for obj in (memio, submemio):
                 obj2 = pickle.loads(pickle.dumps(obj, protocol=proto))
                 self.assertEqual(obj.getvalue(), obj2.getvalue())
@@ -397,14 +399,19 @@ class BytesIOMixin:
         # raises a BufferError.
         self.assertRaises(BufferError, memio.write, b'x' * 100)
         self.assertRaises(BufferError, memio.truncate)
+        self.assertRaises(BufferError, memio.close)
+        self.assertFalse(memio.closed)
         # Mutating the buffer updates the BytesIO
         buf[3:6] = b"abc"
         self.assertEqual(bytes(buf), b"123abc7890")
         self.assertEqual(memio.getvalue(), b"123abc7890")
-        # After the buffer gets released, we can resize the BytesIO again
+        # After the buffer gets released, we can resize and close the BytesIO
+        # again
         del buf
         support.gc_collect()
         memio.truncate()
+        memio.close()
+        self.assertRaises(ValueError, memio.getbuffer)
 
 
 class PyBytesIOTest(MemoryTestMixin, MemorySeekTestMixin,
@@ -711,12 +718,56 @@ class CBytesIOTest(PyBytesIOTest):
 
     @support.cpython_only
     def test_sizeof(self):
-        basesize = support.calcobjsize('P2nN2Pn')
+        basesize = support.calcobjsize('P2n2Pn')
         check = self.check_sizeof
         self.assertEqual(object.__sizeof__(io.BytesIO()), basesize)
         check(io.BytesIO(), basesize )
-        check(io.BytesIO(b'a'), basesize + 1 + 1 )
-        check(io.BytesIO(b'a' * 1000), basesize + 1000 + 1 )
+        check(io.BytesIO(b'a' * 1000), basesize + sys.getsizeof(b'a' * 1000))
+
+    # Various tests of copy-on-write behaviour for BytesIO.
+
+    def _test_cow_mutation(self, mutation):
+        # Common code for all BytesIO copy-on-write mutation tests.
+        imm = b' ' * 1024
+        old_rc = sys.getrefcount(imm)
+        memio = self.ioclass(imm)
+        self.assertEqual(sys.getrefcount(imm), old_rc + 1)
+        mutation(memio)
+        self.assertEqual(sys.getrefcount(imm), old_rc)
+
+    @support.cpython_only
+    def test_cow_truncate(self):
+        # Ensure truncate causes a copy.
+        def mutation(memio):
+            memio.truncate(1)
+        self._test_cow_mutation(mutation)
+
+    @support.cpython_only
+    def test_cow_write(self):
+        # Ensure write that would not cause a resize still results in a copy.
+        def mutation(memio):
+            memio.seek(0)
+            memio.write(b'foo')
+        self._test_cow_mutation(mutation)
+
+    @support.cpython_only
+    def test_cow_setstate(self):
+        # __setstate__ should cause buffer to be released.
+        memio = self.ioclass(b'foooooo')
+        state = memio.__getstate__()
+        def mutation(memio):
+            memio.__setstate__(state)
+        self._test_cow_mutation(mutation)
+
+    @support.cpython_only
+    def test_cow_mutable(self):
+        # BytesIO should accept only Bytes for copy-on-write sharing, since
+        # arbitrary buffer-exporting objects like bytearray() aren't guaranteed
+        # to be immutable.
+        ba = bytearray(1024)
+        old_rc = sys.getrefcount(ba)
+        memio = self.ioclass(ba)
+        self.assertEqual(sys.getrefcount(ba), old_rc)
 
 class CStringIOTest(PyStringIOTest):
     ioclass = io.StringIO
@@ -775,10 +826,5 @@ class CStringIOPickleTest(PyStringIOPickleTest):
             pass
 
 
-def test_main():
-    tests = [PyBytesIOTest, PyStringIOTest, CBytesIOTest, CStringIOTest,
-             PyStringIOPickleTest, CStringIOPickleTest]
-    support.run_unittest(*tests)
-
 if __name__ == '__main__':
-    test_main()
+    unittest.main()

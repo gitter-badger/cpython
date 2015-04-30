@@ -134,6 +134,9 @@ Process-wide parameters
    change for the duration of the program's execution.  No code in the Python
    interpreter will change the contents of this storage.
 
+   Use :c:func:`Py_DecodeLocale` to decode a bytes string to get a
+   :c:type:`wchar_*` string.
+
 
 .. c:function:: wchar* Py_GetProgramName()
 
@@ -236,12 +239,20 @@ Process-wide parameters
    :c:func:`Py_Initialize`, then :c:func:`Py_GetPath` won't attempt to compute a
    default search path but uses the one provided instead.  This is useful if
    Python is embedded by an application that has full knowledge of the location
-   of all modules.  The path components should be separated by semicolons.
+   of all modules.  The path components should be separated by the platform
+   dependent delimiter character, which is ``':'`` on Unix and Mac OS X, ``';'``
+   on Windows.
 
    This also causes :data:`sys.executable` to be set only to the raw program
    name (see :c:func:`Py_SetProgramName`) and for :data:`sys.prefix` and
    :data:`sys.exec_prefix` to be empty.  It is up to the caller to modify these
    if required after calling :c:func:`Py_Initialize`.
+
+   Use :c:func:`Py_DecodeLocale` to decode a bytes string to get a
+   :c:type:`wchar_*` string.
+
+   The path argument is copied internally, so the caller may free it after the
+   call completes.
 
 
 .. c:function:: const char* Py_GetVersion()
@@ -339,6 +350,9 @@ Process-wide parameters
      :data:`sys.path`, which is the same as prepending the current working
      directory (``"."``).
 
+   Use :c:func:`Py_DecodeLocale` to decode a bytes string to get a
+   :c:type:`wchar_*` string.
+
    .. note::
       It is recommended that applications embedding the Python interpreter
       for purposes other than executing a single script pass 0 as *updatepath*,
@@ -363,6 +377,9 @@ Process-wide parameters
    to 1 unless the :program:`python` interpreter was started with the
    :option:`-I`.
 
+   Use :c:func:`Py_DecodeLocale` to decode a bytes string to get a
+   :c:type:`wchar_*` string.
+
    .. versionchanged:: 3.4 The *updatepath* value depends on :option:`-I`.
 
 
@@ -376,6 +393,9 @@ Process-wide parameters
    storage whose contents will not change for the duration of the program's
    execution.  No code in the Python interpreter will change the contents of
    this storage.
+
+   Use :c:func:`Py_DecodeLocale` to decode a bytes string to get a
+   :c:type:`wchar_*` string.
 
 
 .. c:function:: w_char* Py_GetPythonHome()
@@ -1177,7 +1197,7 @@ These functions are only intended to be used by advanced debugging tools.
 
 .. c:function:: PyThreadState * PyInterpreterState_ThreadHead(PyInterpreterState *interp)
 
-   Return the a pointer to the first :c:type:`PyThreadState` object in the list of
+   Return the pointer to the first :c:type:`PyThreadState` object in the list of
    threads associated with the interpreter *interp*.
 
 

@@ -5,14 +5,13 @@ PyDoc_STRVAR(pickle_module_doc,
 "Optimized C implementation for the Python pickle module.");
 
 /*[clinic input]
-output preset file
 module _pickle
 class _pickle.Pickler "PicklerObject *" "&Pickler_Type"
 class _pickle.PicklerMemoProxy "PicklerMemoProxyObject *" "&PicklerMemoProxyType"
 class _pickle.Unpickler "UnpicklerObject *" "&Unpickler_Type"
 class _pickle.UnpicklerMemoProxy "UnpicklerMemoProxyObject *" "&UnpicklerMemoProxyType"
 [clinic start generated code]*/
-/*[clinic end generated code: output=da39a3ee5e6b4b0d input=11c45248a41dd3fc]*/
+/*[clinic end generated code: output=da39a3ee5e6b4b0d input=4b3e113468a58e6c]*/
 
 /* Bump this when new opcodes are added to the pickle protocol. */
 enum {
@@ -152,6 +151,8 @@ typedef struct {
 
     /* codecs.encode, used for saving bytes in older protocols */
     PyObject *codecs_encode;
+    /* builtins.getattr, used for saving nested names with protocol < 4 */
+    PyObject *getattr;
 } PickleState;
 
 /* Forward declaration of the _pickle module definition. */
@@ -188,15 +189,25 @@ _Pickle_ClearState(PickleState *st)
     Py_CLEAR(st->name_mapping_3to2);
     Py_CLEAR(st->import_mapping_3to2);
     Py_CLEAR(st->codecs_encode);
+    Py_CLEAR(st->getattr);
 }
 
 /* Initialize the given pickle module state. */
 static int
 _Pickle_InitState(PickleState *st)
 {
+    PyObject *builtins;
     PyObject *copyreg = NULL;
     PyObject *compat_pickle = NULL;
     PyObject *codecs = NULL;
+
+    builtins = PyEval_GetBuiltins();
+    if (builtins == NULL)
+        goto error;
+    st->getattr = PyDict_GetItemString(builtins, "getattr");
+    if (st->getattr == NULL)
+        goto error;
+    Py_INCREF(st->getattr);
 
     copyreg = PyImport_ImportModule("copyreg");
     if (!copyreg)
@@ -375,7 +386,7 @@ static PyTypeObject Pdata_Type = {
     PyVarObject_HEAD_INIT(NULL, 0)
     "_pickle.Pdata",              /*tp_name*/
     sizeof(Pdata),                /*tp_basicsize*/
-    0,                            /*tp_itemsize*/
+    sizeof(PyObject *),           /*tp_itemsize*/
     (destructor)Pdata_dealloc,    /*tp_dealloc*/
 };
 
@@ -420,22 +431,22 @@ static int
 Pdata_grow(Pdata *self)
 {
     PyObject **data = self->data;
-    Py_ssize_t allocated = self->allocated;
-    Py_ssize_t new_allocated;
+    size_t allocated = (size_t)self->allocated;
+    size_t new_allocated;
 
     new_allocated = (allocated >> 3) + 6;
     /* check for integer overflow */
-    if (new_allocated > PY_SSIZE_T_MAX - allocated)
+    if (new_allocated > (size_t)PY_SSIZE_T_MAX - allocated)
         goto nomemory;
     new_allocated += allocated;
-    if (new_allocated > (PY_SSIZE_T_MAX / sizeof(PyObject *)))
+    if (new_allocated > ((size_t)PY_SSIZE_T_MAX / sizeof(PyObject *)))
         goto nomemory;
     data = PyMem_REALLOC(data, new_allocated * sizeof(PyObject *));
     if (data == NULL)
         goto nomemory;
 
     self->data = data;
-    self->allocated = new_allocated;
+    self->allocated = (Py_ssize_t)new_allocated;
     return 0;
 
   nomemory:
@@ -850,7 +861,7 @@ _Pickler_ClearBuffer(PicklerObject *self)
 static void
 _write_size64(char *out, size_t value)
 {
-    int i;
+    size_t i;
 
     assert(sizeof(size_t) <= 8);
 
@@ -1456,7 +1467,7 @@ memo_get(PicklerObject *self, PyObject *key)
             pdata[1] = (unsigned char)(*value & 0xff);
             len = 2;
         }
-        else if (*value <= 0xffffffffL) {
+        else if ((size_t)*value <= 0xffffffffUL) {
             pdata[0] = LONG_BINGET;
             pdata[1] = (unsigned char)(*value & 0xff);
             pdata[2] = (unsigned char)((*value >> 8) & 0xff);
@@ -1513,7 +1524,7 @@ memo_put(PicklerObject *self, PyObject *obj)
             pdata[1] = (unsigned char)idx;
             len = 2;
         }
-        else if (idx <= 0xffffffffL) {
+        else if ((size_t)idx <= 0xffffffffUL) {
             pdata[0] = LONG_BINPUT;
             pdata[1] = (unsigned char)(idx & 0xff);
             pdata[2] = (unsigned char)((idx >> 8) & 0xff);
@@ -1535,66 +1546,101 @@ memo_put(PicklerObject *self, PyObject *obj)
 }
 
 static PyObject *
-getattribute(PyObject *obj, PyObject *name, int allow_qualname) {
-    PyObject *dotted_path;
-    Py_ssize_t i;
+get_dotted_path(PyObject *obj, PyObject *name) {
     _Py_static_string(PyId_dot, ".");
     _Py_static_string(PyId_locals, "<locals>");
+    PyObject *dotted_path;
+    Py_ssize_t i, n;
 
     dotted_path = PyUnicode_Split(name, _PyUnicode_FromId(&PyId_dot), -1);
-    if (dotted_path == NULL) {
+    if (dotted_path == NULL)
         return NULL;
-    }
-    assert(Py_SIZE(dotted_path) >= 1);
-    if (!allow_qualname && Py_SIZE(dotted_path) > 1) {
-        PyErr_Format(PyExc_AttributeError,
-                     "Can't get qualified attribute %R on %R;"
-                     "use protocols >= 4 to enable support",
-                     name, obj);
-        Py_DECREF(dotted_path);
-        return NULL;
-    }
-    Py_INCREF(obj);
-    for (i = 0; i < Py_SIZE(dotted_path); i++) {
+    n = PyList_GET_SIZE(dotted_path);
+    assert(n >= 1);
+    for (i = 0; i < n; i++) {
         PyObject *subpath = PyList_GET_ITEM(dotted_path, i);
-        PyObject *tmp;
         PyObject *result = PyUnicode_RichCompare(
             subpath, _PyUnicode_FromId(&PyId_locals), Py_EQ);
         int is_equal = (result == Py_True);
         assert(PyBool_Check(result));
         Py_DECREF(result);
         if (is_equal) {
-            PyErr_Format(PyExc_AttributeError,
-                         "Can't get local attribute %R on %R", name, obj);
-            Py_DECREF(dotted_path);
-            Py_DECREF(obj);
-            return NULL;
-        }
-        tmp = PyObject_GetAttr(obj, subpath);
-        Py_DECREF(obj);
-        if (tmp == NULL) {
-            if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
-                PyErr_Clear();
+            if (obj == NULL)
                 PyErr_Format(PyExc_AttributeError,
-                             "Can't get attribute %R on %R", name, obj);
-            }
+                             "Can't pickle local object %R", name);
+            else
+                PyErr_Format(PyExc_AttributeError,
+                             "Can't pickle local attribute %R on %R", name, obj);
             Py_DECREF(dotted_path);
             return NULL;
         }
-        obj = tmp;
     }
-    Py_DECREF(dotted_path);
-    return obj;
+    return dotted_path;
 }
 
 static PyObject *
-whichmodule(PyObject *global, PyObject *global_name, int allow_qualname)
+get_deep_attribute(PyObject *obj, PyObject *names, PyObject **pparent)
+{
+    Py_ssize_t i, n;
+    PyObject *parent = NULL;
+
+    assert(PyList_CheckExact(names));
+    Py_INCREF(obj);
+    n = PyList_GET_SIZE(names);
+    for (i = 0; i < n; i++) {
+        PyObject *name = PyList_GET_ITEM(names, i);
+        Py_XDECREF(parent);
+        parent = obj;
+        obj = PyObject_GetAttr(parent, name);
+        if (obj == NULL) {
+            Py_DECREF(parent);
+            return NULL;
+        }
+    }
+    if (pparent != NULL)
+        *pparent = parent;
+    else
+        Py_XDECREF(parent);
+    return obj;
+}
+
+static void
+reformat_attribute_error(PyObject *obj, PyObject *name)
+{
+    if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
+        PyErr_Clear();
+        PyErr_Format(PyExc_AttributeError,
+                     "Can't get attribute %R on %R", name, obj);
+    }
+}
+
+
+static PyObject *
+getattribute(PyObject *obj, PyObject *name, int allow_qualname)
+{
+    PyObject *dotted_path, *attr;
+
+    if (allow_qualname) {
+        dotted_path = get_dotted_path(obj, name);
+        if (dotted_path == NULL)
+            return NULL;
+        attr = get_deep_attribute(obj, dotted_path, NULL);
+        Py_DECREF(dotted_path);
+    }
+    else
+        attr = PyObject_GetAttr(obj, name);
+    if (attr == NULL)
+        reformat_attribute_error(obj, name);
+    return attr;
+}
+
+static PyObject *
+whichmodule(PyObject *global, PyObject *dotted_path)
 {
     PyObject *module_name;
     PyObject *modules_dict;
     PyObject *module;
-    PyObject *obj;
-    Py_ssize_t i, j;
+    Py_ssize_t i;
     _Py_IDENTIFIER(__module__);
     _Py_IDENTIFIER(modules);
     _Py_IDENTIFIER(__main__);
@@ -1616,6 +1662,7 @@ whichmodule(PyObject *global, PyObject *global_name, int allow_qualname)
     }
     assert(module_name == NULL);
 
+    /* Fallback on walking sys.modules */
     modules_dict = _PySys_GetObjectId(&PyId_modules);
     if (modules_dict == NULL) {
         PyErr_SetString(PyExc_RuntimeError, "unable to get sys.modules");
@@ -1623,31 +1670,28 @@ whichmodule(PyObject *global, PyObject *global_name, int allow_qualname)
     }
 
     i = 0;
-    while ((j = PyDict_Next(modules_dict, &i, &module_name, &module))) {
-        PyObject *result = PyUnicode_RichCompare(
-            module_name, _PyUnicode_FromId(&PyId___main__), Py_EQ);
-        int is_equal = (result == Py_True);
-        assert(PyBool_Check(result));
-        Py_DECREF(result);
-        if (is_equal)
+    while (PyDict_Next(modules_dict, &i, &module_name, &module)) {
+        PyObject *candidate;
+        if (PyUnicode_Check(module_name) &&
+            !PyUnicode_CompareWithASCIIString(module_name, "__main__"))
             continue;
         if (module == Py_None)
             continue;
 
-        obj = getattribute(module, global_name, allow_qualname);
-        if (obj == NULL) {
+        candidate = get_deep_attribute(module, dotted_path, NULL);
+        if (candidate == NULL) {
             if (!PyErr_ExceptionMatches(PyExc_AttributeError))
                 return NULL;
             PyErr_Clear();
             continue;
         }
 
-        if (obj == global) {
-            Py_DECREF(obj);
+        if (candidate == global) {
             Py_INCREF(module_name);
+            Py_DECREF(candidate);
             return module_name;
         }
-        Py_DECREF(obj);
+        Py_DECREF(candidate);
     }
 
     /* If no module is found, use __main__. */
@@ -1933,7 +1977,7 @@ save_float(PicklerObject *self, PyObject *obj)
         if (_Pickler_Write(self, &op, 1) < 0)
             goto done;
 
-        buf = PyOS_double_to_string(x, 'g', 17, 0, NULL);
+        buf = PyOS_double_to_string(x, 'r', 0, Py_DTSF_ADD_DOT_0, NULL);
         if (!buf) {
             PyErr_NoMemory();
             goto done;
@@ -2013,7 +2057,7 @@ save_bytes(PicklerObject *self, PyObject *obj)
             header[1] = (unsigned char)size;
             len = 2;
         }
-        else if (size <= 0xffffffffL) {
+        else if ((size_t)size <= 0xffffffffUL) {
             header[0] = BINBYTES;
             header[1] = (unsigned char)(size & 0xff);
             header[2] = (unsigned char)((size >> 8) & 0xff);
@@ -2050,9 +2094,10 @@ save_bytes(PicklerObject *self, PyObject *obj)
 static PyObject *
 raw_unicode_escape(PyObject *obj)
 {
-    PyObject *repr, *result;
+    PyObject *repr;
     char *p;
-    Py_ssize_t i, size, expandsize;
+    Py_ssize_t i, size;
+    size_t expandsize;
     void *data;
     unsigned int kind;
 
@@ -2067,15 +2112,16 @@ raw_unicode_escape(PyObject *obj)
     else
         expandsize = 6;
 
-    if (size > PY_SSIZE_T_MAX / expandsize)
+    if ((size_t)size > (size_t)PY_SSIZE_T_MAX / expandsize)
         return PyErr_NoMemory();
-    repr = PyByteArray_FromStringAndSize(NULL, expandsize * size);
+    repr = PyBytes_FromStringAndSize(NULL, expandsize * size);
     if (repr == NULL)
         return NULL;
     if (size == 0)
-        goto done;
+        return repr;
+    assert(Py_REFCNT(repr) == 1);
 
-    p = PyByteArray_AS_STRING(repr);
+    p = PyBytes_AS_STRING(repr);
     for (i=0; i < size; i++) {
         Py_UCS4 ch = PyUnicode_READ(kind, data, i);
         /* Map 32-bit characters to '\Uxxxxxxxx' */
@@ -2104,12 +2150,10 @@ raw_unicode_escape(PyObject *obj)
         else
             *p++ = (char) ch;
     }
-    size = p - PyByteArray_AS_STRING(repr);
-
-done:
-    result = PyBytes_FromStringAndSize(PyByteArray_AS_STRING(repr), size);
-    Py_DECREF(repr);
-    return result;
+    size = p - PyBytes_AS_STRING(repr);
+    if (_PyBytes_Resize(&repr, size) < 0)
+        return NULL;
+    return repr;
 }
 
 static int
@@ -2118,12 +2162,13 @@ write_utf8(PicklerObject *self, char *data, Py_ssize_t size)
     char header[9];
     Py_ssize_t len;
 
+    assert(size >= 0);
     if (size <= 0xff && self->proto >= 4) {
         header[0] = SHORT_BINUNICODE;
         header[1] = (unsigned char)(size & 0xff);
         len = 2;
     }
-    else if (size <= 0xffffffffUL) {
+    else if ((size_t)size <= 0xffffffffUL) {
         header[0] = BINUNICODE;
         header[1] = (unsigned char)(size & 0xff);
         header[2] = (unsigned char)((size >> 8) & 0xff);
@@ -3026,6 +3071,7 @@ fix_imports(PyObject **module_name, PyObject **global_name)
         Py_INCREF(fixed_global_name);
         *module_name = fixed_module_name;
         *global_name = fixed_global_name;
+        return 0;
     }
     else if (PyErr_Occurred()) {
         return -1;
@@ -3057,6 +3103,9 @@ save_global(PicklerObject *self, PyObject *obj, PyObject *name)
     PyObject *global_name = NULL;
     PyObject *module_name = NULL;
     PyObject *module = NULL;
+    PyObject *parent = NULL;
+    PyObject *dotted_path = NULL;
+    PyObject *lastname = NULL;
     PyObject *cls;
     PickleState *st = _Pickle_GetGlobalState();
     int status = 0;
@@ -3070,13 +3119,11 @@ save_global(PicklerObject *self, PyObject *obj, PyObject *name)
         global_name = name;
     }
     else {
-        if (self->proto >= 4) {
-            global_name = _PyObject_GetAttrId(obj, &PyId___qualname__);
-            if (global_name == NULL) {
-                if (!PyErr_ExceptionMatches(PyExc_AttributeError))
-                    goto error;
-                PyErr_Clear();
-            }
+        global_name = _PyObject_GetAttrId(obj, &PyId___qualname__);
+        if (global_name == NULL) {
+            if (!PyErr_ExceptionMatches(PyExc_AttributeError))
+                goto error;
+            PyErr_Clear();
         }
         if (global_name == NULL) {
             global_name = _PyObject_GetAttrId(obj, &PyId___name__);
@@ -3085,7 +3132,10 @@ save_global(PicklerObject *self, PyObject *obj, PyObject *name)
         }
     }
 
-    module_name = whichmodule(obj, global_name, self->proto >= 4);
+    dotted_path = get_dotted_path(module, global_name);
+    if (dotted_path == NULL)
+        goto error;
+    module_name = whichmodule(obj, dotted_path);
     if (module_name == NULL)
         goto error;
 
@@ -3104,7 +3154,10 @@ save_global(PicklerObject *self, PyObject *obj, PyObject *name)
                      obj, module_name);
         goto error;
     }
-    cls = getattribute(module, global_name, self->proto >= 4);
+    lastname = PyList_GET_ITEM(dotted_path, PyList_GET_SIZE(dotted_path)-1);
+    Py_INCREF(lastname);
+    cls = get_deep_attribute(module, dotted_path, &parent);
+    Py_CLEAR(dotted_path);
     if (cls == NULL) {
         PyErr_Format(st->PicklingError,
                      "Can't pickle %R: attribute lookup %S on %S failed",
@@ -3191,6 +3244,11 @@ save_global(PicklerObject *self, PyObject *obj, PyObject *name)
     }
     else {
   gen_global:
+        if (parent == module) {
+            Py_INCREF(lastname);
+            Py_DECREF(global_name);
+            global_name = lastname;
+        }
         if (self->proto >= 4) {
             const char stack_global_op = STACK_GLOBAL;
 
@@ -3200,6 +3258,15 @@ save_global(PicklerObject *self, PyObject *obj, PyObject *name)
                 goto error;
 
             if (_Pickler_Write(self, &stack_global_op, 1) < 0)
+                goto error;
+        }
+        else if (parent != module) {
+            PickleState *st = _Pickle_GetGlobalState();
+            PyObject *reduce_value = Py_BuildValue("(O(OO))",
+                                        st->getattr, parent, lastname);
+            status = save_reduce(self, reduce_value, NULL);
+            Py_DECREF(reduce_value);
+            if (status < 0)
                 goto error;
         }
         else {
@@ -3280,6 +3347,9 @@ save_global(PicklerObject *self, PyObject *obj, PyObject *name)
     Py_XDECREF(module_name);
     Py_XDECREF(global_name);
     Py_XDECREF(module);
+    Py_XDECREF(parent);
+    Py_XDECREF(dotted_path);
+    Py_XDECREF(lastname);
 
     return status;
 }
@@ -3459,20 +3529,19 @@ save_reduce(PicklerObject *self, PyObject *args, PyObject *obj)
             }
             PyErr_Clear();
         }
-        else if (self->proto >= 4) {
-            _Py_IDENTIFIER(__newobj_ex__);
-            use_newobj_ex = PyUnicode_Check(name) &&
-                PyUnicode_Compare(
-                    name, _PyUnicode_FromId(&PyId___newobj_ex__)) == 0;
-            Py_DECREF(name);
+        else if (PyUnicode_Check(name)) {
+            if (self->proto >= 4) {
+                _Py_IDENTIFIER(__newobj_ex__);
+                use_newobj_ex = PyUnicode_Compare(
+                        name, _PyUnicode_FromId(&PyId___newobj_ex__)) == 0;
+            }
+            if (!use_newobj_ex) {
+                _Py_IDENTIFIER(__newobj__);
+                use_newobj = PyUnicode_Compare(
+                        name, _PyUnicode_FromId(&PyId___newobj__)) == 0;
+            }
         }
-        else {
-            _Py_IDENTIFIER(__newobj__);
-            use_newobj = PyUnicode_Check(name) &&
-                PyUnicode_Compare(
-                    name, _PyUnicode_FromId(&PyId___newobj__)) == 0;
-            Py_DECREF(name);
-        }
+        Py_XDECREF(name);
     }
 
     if (use_newobj_ex) {
@@ -3930,9 +3999,37 @@ _pickle_Pickler_dump(PicklerObject *self, PyObject *obj)
     Py_RETURN_NONE;
 }
 
+/*[clinic input]
+
+_pickle.Pickler.__sizeof__ -> Py_ssize_t
+
+Returns size in memory, in bytes.
+[clinic start generated code]*/
+
+static Py_ssize_t
+_pickle_Pickler___sizeof___impl(PicklerObject *self)
+/*[clinic end generated code: output=106edb3123f332e1 input=8cbbec9bd5540d42]*/
+{
+    Py_ssize_t res, s;
+
+    res = sizeof(PicklerObject);
+    if (self->memo != NULL) {
+        res += sizeof(PyMemoTable);
+        res += self->memo->mt_allocated * sizeof(PyMemoEntry);
+    }
+    if (self->output_buffer != NULL) {
+        s = _PySys_GetSizeOf(self->output_buffer);
+        if (s == -1)
+            return -1;
+        res += s;
+    }
+    return res;
+}
+
 static struct PyMethodDef Pickler_methods[] = {
     _PICKLE_PICKLER_DUMP_METHODDEF
     _PICKLE_PICKLER_CLEAR_MEMO_METHODDEF
+    _PICKLE_PICKLER___SIZEOF___METHODDEF
     {NULL, NULL}                /* sentinel */
 };
 
@@ -4009,8 +4106,9 @@ to map the new Python 3 names to the old module names used in Python
 [clinic start generated code]*/
 
 static int
-_pickle_Pickler___init___impl(PicklerObject *self, PyObject *file, PyObject *protocol, int fix_imports)
-/*[clinic end generated code: output=56e229f3b1f4332f input=b8cdeb7e3f5ee674]*/
+_pickle_Pickler___init___impl(PicklerObject *self, PyObject *file,
+                              PyObject *protocol, int fix_imports)
+/*[clinic end generated code: output=b5f31078dab17fb0 input=b8cdeb7e3f5ee674]*/
 {
     _Py_IDENTIFIER(persistent_id);
     _Py_IDENTIFIER(dispatch_table);
@@ -4505,10 +4603,10 @@ static Py_ssize_t
 calc_binsize(char *bytes, int nbytes)
 {
     unsigned char *s = (unsigned char *)bytes;
-    int i;
+    Py_ssize_t i;
     size_t x = 0;
 
-    for (i = 0; i < nbytes && i < sizeof(size_t); i++) {
+    for (i = 0; i < nbytes && (size_t)i < sizeof(size_t); i++) {
         x |= (size_t) s[i] << (8 * i);
     }
 
@@ -4527,7 +4625,7 @@ static long
 calc_binint(char *bytes, int nbytes)
 {
     unsigned char *s = (unsigned char *)bytes;
-    int i;
+    Py_ssize_t i;
     long x = 0;
 
     for (i = 0; i < nbytes; i++) {
@@ -6205,8 +6303,10 @@ needed.  Both arguments passed are str objects.
 [clinic start generated code]*/
 
 static PyObject *
-_pickle_Unpickler_find_class_impl(UnpicklerObject *self, PyObject *module_name, PyObject *global_name)
-/*[clinic end generated code: output=64c77437e088e188 input=e2e6a865de093ef4]*/
+_pickle_Unpickler_find_class_impl(UnpicklerObject *self,
+                                  PyObject *module_name,
+                                  PyObject *global_name)
+/*[clinic end generated code: output=becc08d7f9ed41e3 input=e2e6a865de093ef4]*/
 {
     PyObject *global;
     PyObject *modules_dict;
@@ -6250,20 +6350,21 @@ _pickle_Unpickler_find_class_impl(UnpicklerObject *self, PyObject *module_name, 
         else if (PyErr_Occurred()) {
             return NULL;
         }
-
-        /* Check if the module was renamed. */
-        item = PyDict_GetItemWithError(st->import_mapping_2to3, module_name);
-        if (item) {
-            if (!PyUnicode_Check(item)) {
-                PyErr_Format(PyExc_RuntimeError,
-                             "_compat_pickle.IMPORT_MAPPING values should be "
-                             "strings, not %.200s", Py_TYPE(item)->tp_name);
+        else {
+            /* Check if the module was renamed. */
+            item = PyDict_GetItemWithError(st->import_mapping_2to3, module_name);
+            if (item) {
+                if (!PyUnicode_Check(item)) {
+                    PyErr_Format(PyExc_RuntimeError,
+                                "_compat_pickle.IMPORT_MAPPING values should be "
+                                "strings, not %.200s", Py_TYPE(item)->tp_name);
+                    return NULL;
+                }
+                module_name = item;
+            }
+            else if (PyErr_Occurred()) {
                 return NULL;
             }
-            module_name = item;
-        }
-        else if (PyErr_Occurred()) {
-            return NULL;
         }
     }
 
@@ -6289,9 +6390,37 @@ _pickle_Unpickler_find_class_impl(UnpicklerObject *self, PyObject *module_name, 
     return global;
 }
 
+/*[clinic input]
+
+_pickle.Unpickler.__sizeof__ -> Py_ssize_t
+
+Returns size in memory, in bytes.
+[clinic start generated code]*/
+
+static Py_ssize_t
+_pickle_Unpickler___sizeof___impl(UnpicklerObject *self)
+/*[clinic end generated code: output=119d9d03ad4c7651 input=13333471fdeedf5e]*/
+{
+    Py_ssize_t res;
+
+    res = sizeof(UnpicklerObject);
+    if (self->memo != NULL)
+        res += self->memo_size * sizeof(PyObject *);
+    if (self->marks != NULL)
+        res += self->marks_size * sizeof(Py_ssize_t);
+    if (self->input_line != NULL)
+        res += strlen(self->input_line) + 1;
+    if (self->encoding != NULL)
+        res += strlen(self->encoding) + 1;
+    if (self->errors != NULL)
+        res += strlen(self->errors) + 1;
+    return res;
+}
+
 static struct PyMethodDef Unpickler_methods[] = {
     _PICKLE_UNPICKLER_LOAD_METHODDEF
     _PICKLE_UNPICKLER_FIND_CLASS_METHODDEF
+    _PICKLE_UNPICKLER___SIZEOF___METHODDEF
     {NULL, NULL}                /* sentinel */
 };
 
@@ -6388,8 +6517,10 @@ string instances as bytes objects.
 [clinic start generated code]*/
 
 static int
-_pickle_Unpickler___init___impl(UnpicklerObject *self, PyObject *file, int fix_imports, const char *encoding, const char *errors)
-/*[clinic end generated code: output=b9ed1d84d315f3b5 input=30b4dc9e976b890c]*/
+_pickle_Unpickler___init___impl(UnpicklerObject *self, PyObject *file,
+                                int fix_imports, const char *encoding,
+                                const char *errors)
+/*[clinic end generated code: output=e2c8ce748edc57b0 input=30b4dc9e976b890c]*/
 {
     _Py_IDENTIFIER(persistent_load);
 
@@ -6817,8 +6948,9 @@ to map the new Python 3 names to the old module names used in Python
 [clinic start generated code]*/
 
 static PyObject *
-_pickle_dump_impl(PyModuleDef *module, PyObject *obj, PyObject *file, PyObject *protocol, int fix_imports)
-/*[clinic end generated code: output=a606e626d553850d input=e9e5fdd48de92eae]*/
+_pickle_dump_impl(PyModuleDef *module, PyObject *obj, PyObject *file,
+                  PyObject *protocol, int fix_imports)
+/*[clinic end generated code: output=0de7dff89c406816 input=e9e5fdd48de92eae]*/
 {
     PicklerObject *pickler = _Pickler_New();
 
@@ -6870,8 +7002,9 @@ Python 2, so that the pickle data stream is readable with Python 2.
 [clinic start generated code]*/
 
 static PyObject *
-_pickle_dumps_impl(PyModuleDef *module, PyObject *obj, PyObject *protocol, int fix_imports)
-/*[clinic end generated code: output=777f0deefe5b88ee input=293dbeda181580b7]*/
+_pickle_dumps_impl(PyModuleDef *module, PyObject *obj, PyObject *protocol,
+                   int fix_imports)
+/*[clinic end generated code: output=daa380db56fe07b9 input=293dbeda181580b7]*/
 {
     PyObject *result;
     PicklerObject *pickler = _Pickler_New();
@@ -6930,8 +7063,9 @@ string instances as bytes objects.
 [clinic start generated code]*/
 
 static PyObject *
-_pickle_load_impl(PyModuleDef *module, PyObject *file, int fix_imports, const char *encoding, const char *errors)
-/*[clinic end generated code: output=568c61356c172654 input=da97372e38e510a6]*/
+_pickle_load_impl(PyModuleDef *module, PyObject *file, int fix_imports,
+                  const char *encoding, const char *errors)
+/*[clinic end generated code: output=798f1c57cb2b4eb1 input=da97372e38e510a6]*/
 {
     PyObject *result;
     UnpicklerObject *unpickler = _Unpickler_New();
@@ -6983,8 +7117,9 @@ string instances as bytes objects.
 [clinic start generated code]*/
 
 static PyObject *
-_pickle_loads_impl(PyModuleDef *module, PyObject *data, int fix_imports, const char *encoding, const char *errors)
-/*[clinic end generated code: output=0b3845ad110b2522 input=f57f0fdaa2b4cb8b]*/
+_pickle_loads_impl(PyModuleDef *module, PyObject *data, int fix_imports,
+                   const char *encoding, const char *errors)
+/*[clinic end generated code: output=61e9cdb01e36a736 input=f57f0fdaa2b4cb8b]*/
 {
     PyObject *result;
     UnpicklerObject *unpickler = _Unpickler_New();
@@ -7046,6 +7181,7 @@ pickle_traverse(PyObject *m, visitproc visit, void *arg)
     Py_VISIT(st->name_mapping_3to2);
     Py_VISIT(st->import_mapping_3to2);
     Py_VISIT(st->codecs_encode);
+    Py_VISIT(st->getattr);
     return 0;
 }
 

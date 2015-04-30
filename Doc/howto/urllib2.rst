@@ -26,7 +26,7 @@ Introduction
 
         A tutorial on *Basic Authentication*, with examples in Python.
 
-**urllib.request** is a `Python <http://www.python.org>`_ module for fetching URLs
+**urllib.request** is a Python module for fetching URLs
 (Uniform Resource Locators). It offers a very simple interface, in the form of
 the *urlopen* function. This is capable of fetching URLs using a variety of
 different protocols. It also offers a slightly more complex interface for
@@ -53,8 +53,8 @@ Fetching URLs
 The simplest way to use urllib.request is as follows::
 
     import urllib.request
-    response = urllib.request.urlopen('http://python.org/')
-    html = response.read()
+    with urllib.request.urlopen('http://python.org/') as response:
+       html = response.read()
 
 If you wish to retrieve a resource via URL and store it in a temporary location,
 you can do so via the :func:`~urllib.request.urlretrieve` function::
@@ -79,8 +79,8 @@ response::
     import urllib.request
 
     req = urllib.request.Request('http://www.voidspace.org.uk')
-    response = urllib.request.urlopen(req)
-    the_page = response.read()
+    with urllib.request.urlopen(req) as response:
+       the_page = response.read()
 
 Note that urllib.request makes use of the same Request interface to handle all URL
 schemes.  For example, you can make an FTP request like so::
@@ -97,7 +97,7 @@ Data
 ----
 
 Sometimes you want to send data to a URL (often the URL will refer to a CGI
-(Common Gateway Interface) script [#]_ or other web application). With HTTP,
+(Common Gateway Interface) script or other web application). With HTTP,
 this is often done using what's known as a **POST** request. This is often what
 your browser does when you submit a HTML form that you filled in on the web. Not
 all POSTs have to come from forms: you can use a POST to transmit arbitrary data
@@ -117,8 +117,8 @@ library. ::
     data = urllib.parse.urlencode(values)
     data = data.encode('utf-8') # data should be bytes
     req = urllib.request.Request(url, data)
-    response = urllib.request.urlopen(req)
-    the_page = response.read()
+    with urllib.request.urlopen(req) as response:
+       the_page = response.read()
 
 Note that other encodings are sometimes required (e.g. for file upload from HTML
 forms - see `HTML Specification, Form Submission
@@ -183,8 +183,8 @@ Explorer [#]_. ::
     data  = urllib.parse.urlencode(values)
     data = data.encode('utf-8')
     req = urllib.request.Request(url, data, headers)
-    response = urllib.request.urlopen(req)
-    the_page = response.read()
+    with urllib.request.urlopen(req) as response:
+       the_page = response.read()
 
 The response also has two useful methods. See the section on `info and geturl`_
 which comes after we have a look at what happens when things go wrong.
@@ -572,12 +572,8 @@ Footnotes
 
 This document was reviewed and revised by John Lee.
 
-.. [#] For an introduction to the CGI protocol see
-       `Writing Web Applications in Python <http://www.pyzine.com/Issue008/Section_Articles/article_CGIOne.html>`_.
 .. [#] Like Google for example. The *proper* way to use google from a program
-       is to use `PyGoogle <http://pygoogle.sourceforge.net>`_ of course. See
-       `Voidspace Google <http://www.voidspace.org.uk/python/recipebook.shtml#google>`_
-       for some examples of using the Google API.
+       is to use `PyGoogle <http://pygoogle.sourceforge.net>`_ of course.
 .. [#] Browser sniffing is a very bad practise for website design - building
        sites using web standards is much more sensible. Unfortunately a lot of
        sites still send different versions to different browsers.
@@ -591,5 +587,5 @@ This document was reviewed and revised by John Lee.
        scripts with a localhost server, I have to prevent urllib from using
        the proxy.
 .. [#] urllib opener for SSL proxy (CONNECT method): `ASPN Cookbook Recipe
-       <http://aspn.activestate.com/ASPN/Cookbook/Python/Recipe/456195>`_.
+       <http://code.activestate.com/recipes/456195/>`_.
 

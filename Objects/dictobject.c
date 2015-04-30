@@ -233,6 +233,8 @@ static int dictresize(PyDictObject *mp, Py_ssize_t minused);
 static PyDictObject *free_list[PyDict_MAXFREELIST];
 static int numfree = 0;
 
+#include "clinic/dictobject.c.h"
+
 int
 PyDict_ClearFreeList(void)
 {
@@ -814,13 +816,14 @@ insertdict(PyDictObject *mp, PyObject *key, Py_hash_t hash, PyObject *value)
     if (ep == NULL) {
         return -1;
     }
+    assert(PyUnicode_CheckExact(key) || mp->ma_keys->dk_lookup == lookdict);
     Py_INCREF(value);
     MAINTAIN_TRACKING(mp, key, value);
     old_value = *value_addr;
     if (old_value != NULL) {
         assert(ep->me_key != NULL && ep->me_key != dummy);
         *value_addr = value;
-        Py_DECREF(old_value); /* which **CAN** re-enter */
+        Py_DECREF(old_value); /* which **CAN** re-enter (see issue #22653) */
     }
     else {
         if (ep->me_key == NULL) {
@@ -851,9 +854,8 @@ insertdict(PyDictObject *mp, PyObject *key, Py_hash_t hash, PyObject *value)
         }
         mp->ma_used++;
         *value_addr = value;
+        assert(ep->me_key != NULL && ep->me_key != dummy);
     }
-    assert(ep->me_key != NULL && ep->me_key != dummy);
-    assert(PyUnicode_CheckExact(key) || mp->ma_keys->dk_lookup == lookdict);
     return 0;
 }
 
@@ -1101,6 +1103,44 @@ PyDict_GetItem(PyObject *op, PyObject *key)
     return *value_addr;
 }
 
+PyObject *
+_PyDict_GetItem_KnownHash(PyObject *op, PyObject *key, Py_hash_t hash)
+{
+    PyDictObject *mp = (PyDictObject *)op;
+    PyDictKeyEntry *ep;
+    PyThreadState *tstate;
+    PyObject **value_addr;
+
+    if (!PyDict_Check(op))
+        return NULL;
+
+    /* We can arrive here with a NULL tstate during initialization: try
+       running "python -Wi" for an example related to string interning.
+       Let's just hope that no exception occurs then...  This must be
+       _PyThreadState_Current and not PyThreadState_GET() because in debug
+       mode, the latter complains if tstate is NULL. */
+    tstate = (PyThreadState*)_Py_atomic_load_relaxed(
+        &_PyThreadState_Current);
+    if (tstate != NULL && tstate->curexc_type != NULL) {
+        /* preserve the existing exception */
+        PyObject *err_type, *err_value, *err_tb;
+        PyErr_Fetch(&err_type, &err_value, &err_tb);
+        ep = (mp->ma_keys->dk_lookup)(mp, key, hash, &value_addr);
+        /* ignore errors */
+        PyErr_Restore(err_type, err_value, err_tb);
+        if (ep == NULL)
+            return NULL;
+    }
+    else {
+        ep = (mp->ma_keys->dk_lookup)(mp, key, hash, &value_addr);
+        if (ep == NULL) {
+            PyErr_Clear();
+            return NULL;
+        }
+    }
+    return *value_addr;
+}
+
 /* Variant of PyDict_GetItem() that doesn't suppress exceptions.
    This returns NULL *with* an exception set if an exception occurred.
    It returns NULL *without* an exception set if the key wasn't present.
@@ -1202,6 +1242,24 @@ PyDict_SetItem(PyObject *op, PyObject *key, PyObject *value)
         if (hash == -1)
             return -1;
     }
+
+    /* insertdict() handles any resizing that might be necessary */
+    return insertdict(mp, key, hash, value);
+}
+
+int
+_PyDict_SetItem_KnownHash(PyObject *op, PyObject *key, PyObject *value,
+                         Py_hash_t hash)
+{
+    PyDictObject *mp;
+
+    if (!PyDict_Check(op)) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    assert(key);
+    assert(value);
+    mp = (PyDictObject *)op;
 
     /* insertdict() handles any resizing that might be necessary */
     return insertdict(mp, key, hash, value);
@@ -1701,38 +1759,9 @@ dict.fromkeys
 Returns a new dict with keys from iterable and values equal to value.
 [clinic start generated code]*/
 
-PyDoc_STRVAR(dict_fromkeys__doc__,
-"fromkeys($type, iterable, value=None, /)\n"
-"--\n"
-"\n"
-"Returns a new dict with keys from iterable and values equal to value.");
-
-#define DICT_FROMKEYS_METHODDEF    \
-    {"fromkeys", (PyCFunction)dict_fromkeys, METH_VARARGS|METH_CLASS, dict_fromkeys__doc__},
-
-static PyObject *
-dict_fromkeys_impl(PyTypeObject *type, PyObject *iterable, PyObject *value);
-
-static PyObject *
-dict_fromkeys(PyTypeObject *type, PyObject *args)
-{
-    PyObject *return_value = NULL;
-    PyObject *iterable;
-    PyObject *value = Py_None;
-
-    if (!PyArg_UnpackTuple(args, "fromkeys",
-        1, 2,
-        &iterable, &value))
-        goto exit;
-    return_value = dict_fromkeys_impl(type, iterable, value);
-
-exit:
-    return return_value;
-}
-
 static PyObject *
 dict_fromkeys_impl(PyTypeObject *type, PyObject *iterable, PyObject *value)
-/*[clinic end generated code: output=55f8dc0ffa87406f input=b85a667f9bf4669d]*/
+/*[clinic end generated code: output=8fb98e4b10384999 input=b85a667f9bf4669d]*/
 {
     PyObject *it;       /* iter(seq) */
     PyObject *key;
@@ -2210,18 +2239,9 @@ dict.__contains__
 True if D has a key k, else False.
 [clinic start generated code]*/
 
-PyDoc_STRVAR(dict___contains____doc__,
-"__contains__($self, key, /)\n"
-"--\n"
-"\n"
-"True if D has a key k, else False.");
-
-#define DICT___CONTAINS___METHODDEF    \
-    {"__contains__", (PyCFunction)dict___contains__, METH_O|METH_COEXIST, dict___contains____doc__},
-
 static PyObject *
 dict___contains__(PyDictObject *self, PyObject *key)
-/*[clinic end generated code: output=3cf3f8aaf2cc5cc3 input=b852b2a19b51ab24]*/
+/*[clinic end generated code: output=a3d03db709ed6e6b input=b852b2a19b51ab24]*/
 {
     register PyDictObject *mp = self;
     Py_hash_t hash;

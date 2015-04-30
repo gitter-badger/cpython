@@ -33,6 +33,22 @@ _Py_GetRefTotal(void)
         total -= o->ob_refcnt;
     return total;
 }
+
+void
+_PyDebug_PrintTotalRefs(void) {
+    PyObject *xoptions, *value;
+    _Py_IDENTIFIER(showrefcount);
+
+    xoptions = PySys_GetXOptions();
+    if (xoptions == NULL)
+        return;
+    value = _PyDict_GetItemId(xoptions, &PyId_showrefcount);
+    if (value == Py_True)
+        fprintf(stderr,
+                "[%" PY_FORMAT_SIZE_T "d refs, "
+                "%" PY_FORMAT_SIZE_T "d blocks]\n",
+                _Py_GetRefTotal(), _Py_GetAllocatedBlocks());
+}
 #endif /* Py_REF_DEBUG */
 
 /* Object allocation routines used by NEWOBJ and NEWVAROBJ macros.
@@ -1543,6 +1559,9 @@ PyObject _Py_NotImplementedStruct = {
 void
 _Py_ReadyTypes(void)
 {
+    if (PyType_Ready(&PyBaseObject_Type) < 0)
+        Py_FatalError("Can't initialize object type");
+
     if (PyType_Ready(&PyType_Type) < 0)
         Py_FatalError("Can't initialize type type");
 
@@ -1554,6 +1573,9 @@ _Py_ReadyTypes(void)
 
     if (PyType_Ready(&_PyWeakref_ProxyType) < 0)
         Py_FatalError("Can't initialize weakref proxy type");
+
+    if (PyType_Ready(&PyLong_Type) < 0)
+        Py_FatalError("Can't initialize int type");
 
     if (PyType_Ready(&PyBool_Type) < 0)
         Py_FatalError("Can't initialize bool type");
@@ -1579,9 +1601,6 @@ _Py_ReadyTypes(void)
     if (PyType_Ready(&PySuper_Type) < 0)
         Py_FatalError("Can't initialize super type");
 
-    if (PyType_Ready(&PyBaseObject_Type) < 0)
-        Py_FatalError("Can't initialize object type");
-
     if (PyType_Ready(&PyRange_Type) < 0)
         Py_FatalError("Can't initialize range type");
 
@@ -1605,9 +1624,6 @@ _Py_ReadyTypes(void)
 
     if (PyType_Ready(&PyFloat_Type) < 0)
         Py_FatalError("Can't initialize float type");
-
-    if (PyType_Ready(&PyLong_Type) < 0)
-        Py_FatalError("Can't initialize int type");
 
     if (PyType_Ready(&PyFrozenSet_Type) < 0)
         Py_FatalError("Can't initialize frozenset type");
@@ -1808,9 +1824,6 @@ _Py_GetObjects(PyObject *self, PyObject *args)
 }
 
 #endif
-
-/* Hack to force loading of pycapsule.o */
-PyTypeObject *_PyCapsule_hack = &PyCapsule_Type;
 
 
 /* Hack to force loading of abstract.o */

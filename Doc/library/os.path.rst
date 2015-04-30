@@ -66,11 +66,24 @@ the :mod:`glob` module.)
    empty string (``''``).
 
 
+.. function:: commonpath(paths)
+
+   Return the longest common sub-path of each pathname in the sequence
+   *paths*.  Raise ValueError if *paths* contains both absolute and relative
+   pathnames, or if *paths* is empty.  Unlike :func:`commonprefix`, this
+   returns a valid path.
+
+   Availability: Unix, Windows
+
+   .. versionadded:: 3.5
+
+
 .. function:: commonprefix(list)
 
-   Return the longest path prefix (taken character-by-character) that is a prefix
-   of all paths in  *list*.  If *list* is empty, return the empty string (``''``).
-   Note that this may return invalid paths because it works a character at a time.
+   Return the longest path prefix (taken character-by-character) that is a
+   prefix of all paths in  *list*.  If *list* is empty, return the empty string
+   (``''``).  Note that this may return invalid paths because it works a
+   character at a time.  To obtain a valid path, see :func:`commonpath`.
 
 
 .. function:: dirname(path)
@@ -188,7 +201,7 @@ the :mod:`glob` module.)
 .. function:: islink(path)
 
    Return ``True`` if *path* refers to a directory entry that is a symbolic link.
-   Always ``False`` if symbolic links are not supported.
+   Always ``False`` if symbolic links are not supported by the python runtime.
 
 
 .. function:: ismount(path)
@@ -206,17 +219,22 @@ the :mod:`glob` module.)
       Support for detecting non-root mount points on Windows.
 
 
-.. function:: join(path1[, path2[, ...]])
+.. function:: join(path, *paths)
 
-   Join one or more path components intelligently.  If any component is an absolute
-   path, all previous components (on Windows, including the previous drive letter,
-   if there was one) are thrown away, and joining continues.  The return value is
-   the concatenation of *path1*, and optionally *path2*, etc., with exactly one
-   directory separator (``os.sep``) following each non-empty part except the last.
-   (This means that an empty last part will result in a path that ends with a
-   separator.)  Note that on Windows, since there is a current directory for
-   each drive, ``os.path.join("c:", "foo")`` represents a path relative to the
-   current directory on drive :file:`C:` (:file:`c:foo`), not :file:`c:\\foo`.
+   Join one or more path components intelligently.  The return value is the
+   concatenation of *path* and any members of *\*paths* with exactly one
+   directory separator (``os.sep``) following each non-empty part except the
+   last, meaning that the result will only end in a separator if the last
+   part is empty.  If a component is an absolute path, all previous
+   components are thrown away and joining continues from the absolute path
+   component.
+
+   On Windows, the drive letter is not reset when an absolute path component
+   (e.g., ``r'\foo'``) is encountered.  If a component contains a drive
+   letter, all previous components are thrown away and the drive letter is
+   reset.  Note that since there is a current directory for each drive,
+   ``os.path.join("c:", "foo")`` represents a path relative to the current
+   directory on drive :file:`C:` (:file:`c:foo`), not :file:`c:\\foo`.
 
 
 .. function:: normcase(path)

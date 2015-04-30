@@ -464,7 +464,7 @@ Additive
 
 Multiplicative
 
-    >>> dump_tokens("x = 1//1*1/5*12%0x12")
+    >>> dump_tokens("x = 1//1*1/5*12%0x12@42")
     ENCODING   'utf-8'       (0, 0) (0, 0)
     NAME       'x'           (1, 0) (1, 1)
     OP         '='           (1, 2) (1, 3)
@@ -479,6 +479,8 @@ Multiplicative
     NUMBER     '12'          (1, 13) (1, 15)
     OP         '%'           (1, 15) (1, 16)
     NUMBER     '0x12'        (1, 16) (1, 20)
+    OP         '@'           (1, 20) (1, 21)
+    NUMBER     '42'          (1, 21) (1, 23)
 
 Unary
 
@@ -1066,7 +1068,7 @@ class TestTokenize(TestCase):
         encoding = object()
         encoding_used = None
         def mock_detect_encoding(readline):
-            return encoding, ['first', 'second']
+            return encoding, [b'first', b'second']
 
         def mock__tokenize(readline, encoding):
             nonlocal encoding_used
@@ -1085,7 +1087,7 @@ class TestTokenize(TestCase):
             counter += 1
             if counter == 5:
                 return b''
-            return counter
+            return str(counter).encode()
 
         orig_detect_encoding = tokenize_module.detect_encoding
         orig__tokenize = tokenize_module._tokenize
@@ -1093,7 +1095,8 @@ class TestTokenize(TestCase):
         tokenize_module._tokenize = mock__tokenize
         try:
             results = tokenize(mock_readline)
-            self.assertEqual(list(results), ['first', 'second', 1, 2, 3, 4])
+            self.assertEqual(list(results),
+                             [b'first', b'second', b'1', b'2', b'3', b'4'])
         finally:
             tokenize_module.detect_encoding = orig_detect_encoding
             tokenize_module._tokenize = orig__tokenize
@@ -1154,6 +1157,7 @@ class TestTokenize(TestCase):
         self.assertExactTypeEqual('//', token.DOUBLESLASH)
         self.assertExactTypeEqual('//=', token.DOUBLESLASHEQUAL)
         self.assertExactTypeEqual('@', token.AT)
+        self.assertExactTypeEqual('@=', token.ATEQUAL)
 
         self.assertExactTypeEqual('a**2+b**2==c**2',
                                   NAME, token.DOUBLESTAR, NUMBER,

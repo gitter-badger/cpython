@@ -69,6 +69,7 @@ spami(truth            , PyObject_IsTrue)
 spam2(op_add           , PyNumber_Add)
 spam2(op_sub           , PyNumber_Subtract)
 spam2(op_mul           , PyNumber_Multiply)
+spam2(op_matmul        , PyNumber_MatrixMultiply)
 spam2(op_floordiv      , PyNumber_FloorDivide)
 spam2(op_truediv       , PyNumber_TrueDivide)
 spam2(op_mod           , PyNumber_Remainder)
@@ -86,6 +87,7 @@ spam2(op_or_           , PyNumber_Or)
 spam2(op_iadd          , PyNumber_InPlaceAdd)
 spam2(op_isub          , PyNumber_InPlaceSubtract)
 spam2(op_imul          , PyNumber_InPlaceMultiply)
+spam2(op_imatmul       , PyNumber_InPlaceMatrixMultiply)
 spam2(op_ifloordiv     , PyNumber_InPlaceFloorDivide)
 spam2(op_itruediv      , PyNumber_InPlaceTrueDivide)
 spam2(op_imod          , PyNumber_InPlaceRemainder)
@@ -239,7 +241,7 @@ PyDoc_STRVAR(compare_digest__doc__,
 "Return 'a == b'.  This function uses an approach designed to prevent\n"
 "timing analysis, making it appropriate for cryptography.\n"
 "a and b must both be of the same type: either str (ASCII only),\n"
-"or any type that supports the buffer protocol (e.g. bytes).\n"
+"or any bytes-like object.\n"
 "\n"
 "Note: If a and b are of different lengths, or if an error occurs,\n"
 "a timing attack could theoretically reveal information about the\n"
@@ -277,7 +279,7 @@ compare_digest(PyObject *self, PyObject *args)
         Py_buffer view_a;
         Py_buffer view_b;
 
-        if ((PyObject_CheckBuffer(a) == 0) & (PyObject_CheckBuffer(b) == 0)) {
+        if (PyObject_CheckBuffer(a) == 0 && PyObject_CheckBuffer(b) == 0) {
             PyErr_Format(PyExc_TypeError,
                          "unsupported operand types(s) or combination of types: "
                          "'%.100s' and '%.100s'",
@@ -343,6 +345,7 @@ spam2o(index, "index(a) -- Same as a.__index__()")
 spam2(add, "add(a, b) -- Same as a + b.")
 spam2(sub, "sub(a, b) -- Same as a - b.")
 spam2(mul, "mul(a, b) -- Same as a * b.")
+spam2(matmul, "matmul(a, b) -- Same as a @ b.")
 spam2(floordiv, "floordiv(a, b) -- Same as a // b.")
 spam2(truediv, "truediv(a, b) -- Same as a / b.")
 spam2(mod, "mod(a, b) -- Same as a % b.")
@@ -360,6 +363,7 @@ spam2(or_, "or_(a, b) -- Same as a | b.")
 spam2(iadd, "a = iadd(a, b) -- Same as a += b.")
 spam2(isub, "a = isub(a, b) -- Same as a -= b.")
 spam2(imul, "a = imul(a, b) -- Same as a *= b.")
+spam2(imatmul, "a = imatmul(a, b) -- Same as a @= b.")
 spam2(ifloordiv, "a = ifloordiv(a, b) -- Same as a //= b.")
 spam2(itruediv, "a = itruediv(a, b) -- Same as a /= b")
 spam2(imod, "a = imod(a, b) -- Same as a %= b.")

@@ -125,7 +125,7 @@ class Element:
     This class is the reference implementation of the Element interface.
 
     An element's length is its number of subelements.  That means if you
-    you want to check if an element is truly empty, you should check BOTH
+    want to check if an element is truly empty, you should check BOTH
     its length AND its text attribute.
 
     The element tag, attribute names, and attribute values can be either
@@ -174,7 +174,7 @@ class Element:
         self._children = []
 
     def __repr__(self):
-        return "<Element %s at 0x%x>" % (repr(self.tag), id(self))
+        return "<%s %r at %#x>" % (self.__class__.__name__, self.tag, id(self))
 
     def makeelement(self, tag, attrib):
         """Create a new element with the same type.
@@ -509,7 +509,7 @@ class QName:
     def __str__(self):
         return self.text
     def __repr__(self):
-        return '<QName %r>' % (self.text,)
+        return '<%s %r>' % (self.__class__.__name__, self.text)
     def __hash__(self):
         return hash(self.text)
     def __le__(self, other):
@@ -532,10 +532,6 @@ class QName:
         if isinstance(other, QName):
             return self.text == other.text
         return self.text == other
-    def __ne__(self, other):
-        if isinstance(other, QName):
-            return self.text != other.text
-        return self.text != other
 
 # --------------------------------------------------------------------
 

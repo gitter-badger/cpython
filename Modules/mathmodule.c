@@ -223,6 +223,35 @@ lanczos_sum(double x)
     return num/den;
 }
 
+/* Constant for +infinity, generated in the same way as float('inf'). */
+
+static double
+m_inf(void)
+{
+#ifndef PY_NO_SHORT_FLOAT_REPR
+    return _Py_dg_infinity(0);
+#else
+    return Py_HUGE_VAL;
+#endif
+}
+
+/* Constant nan value, generated in the same way as float('nan'). */
+/* We don't currently assume that Py_NAN is defined everywhere. */
+
+#if !defined(PY_NO_SHORT_FLOAT_REPR) || defined(Py_NAN)
+
+static double
+m_nan(void)
+{
+#ifndef PY_NO_SHORT_FLOAT_REPR
+    return _Py_dg_stdnan(0);
+#else
+    return Py_NAN;
+#endif
+}
+
+#endif
+
 static double
 m_tgamma(double x)
 {
@@ -873,18 +902,18 @@ math_2(PyObject *args, double (*func) (double, double), char *funcname)
 FUNC1(acos, acos, 0,
       "acos(x)\n\nReturn the arc cosine (measured in radians) of x.")
 FUNC1(acosh, m_acosh, 0,
-      "acosh(x)\n\nReturn the hyperbolic arc cosine (measured in radians) of x.")
+      "acosh(x)\n\nReturn the inverse hyperbolic cosine of x.")
 FUNC1(asin, asin, 0,
       "asin(x)\n\nReturn the arc sine (measured in radians) of x.")
 FUNC1(asinh, m_asinh, 0,
-      "asinh(x)\n\nReturn the hyperbolic arc sine (measured in radians) of x.")
+      "asinh(x)\n\nReturn the inverse hyperbolic sine of x.")
 FUNC1(atan, atan, 0,
       "atan(x)\n\nReturn the arc tangent (measured in radians) of x.")
 FUNC2(atan2, m_atan2,
       "atan2(y, x)\n\nReturn the arc tangent (measured in radians) of y/x.\n"
       "Unlike atan(y/x), the signs of both x and y are considered.")
 FUNC1(atanh, m_atanh, 0,
-      "atanh(x)\n\nReturn the hyperbolic arc tangent (measured in radians) of x.")
+      "atanh(x)\n\nReturn the inverse hyperbolic tangent of x.")
 
 static PyObject * math_ceil(PyObject *self, PyObject *number) {
     _Py_IDENTIFIER(__ceil__);
@@ -992,7 +1021,7 @@ FUNC1(tanh, tanh, 0,
    Note 4: A similar implementation is in Modules/cmathmodule.c.
    Be sure to update both when making changes.
 
-   Note 5: The signature of math.fsum() differs from __builtin__.sum()
+   Note 5: The signature of math.fsum() differs from builtins.sum()
    because the start argument doesn't make sense in the context of
    accurate summation.  Since the partials table is collapsed before
    returning a result, sum(seq2, start=sum(seq1)) may not equal the
@@ -1010,7 +1039,7 @@ _fsum_realloc(double **p_ptr, Py_ssize_t  n,
     Py_ssize_t m = *m_ptr;
 
     m += m;  /* double */
-    if (n < m && m < (PY_SSIZE_T_MAX / sizeof(double))) {
+    if (n < m && (size_t)m < ((size_t)PY_SSIZE_T_MAX / sizeof(double))) {
         double *p = *p_ptr;
         if (p == ps) {
             v = PyMem_Malloc(sizeof(double) * m);
@@ -1408,6 +1437,7 @@ static PyObject *
 math_factorial(PyObject *self, PyObject *arg)
 {
     long x;
+    int overflow;
     PyObject *result, *odd_part, *two_valuation;
 
     if (PyFloat_Check(arg)) {
@@ -1421,15 +1451,22 @@ math_factorial(PyObject *self, PyObject *arg)
         lx = PyLong_FromDouble(dx);
         if (lx == NULL)
             return NULL;
-        x = PyLong_AsLong(lx);
+        x = PyLong_AsLongAndOverflow(lx, &overflow);
         Py_DECREF(lx);
     }
     else
-        x = PyLong_AsLong(arg);
+        x = PyLong_AsLongAndOverflow(arg, &overflow);
 
-    if (x == -1 && PyErr_Occurred())
+    if (x == -1 && PyErr_Occurred()) {
         return NULL;
-    if (x < 0) {
+    }
+    else if (overflow == 1) {
+        PyErr_Format(PyExc_OverflowError,
+                     "factorial() argument should not exceed %ld",
+                     LONG_MAX);
+        return NULL;
+    }
+    else if (overflow == -1 || x < 0) {
         PyErr_SetString(PyExc_ValueError,
                         "factorial() not defined for negative values");
         return NULL;
@@ -2001,7 +2038,11 @@ PyInit_math(void)
 
     PyModule_AddObject(m, "pi", PyFloat_FromDouble(Py_MATH_PI));
     PyModule_AddObject(m, "e", PyFloat_FromDouble(Py_MATH_E));
+    PyModule_AddObject(m, "inf", PyFloat_FromDouble(m_inf()));
+#if !defined(PY_NO_SHORT_FLOAT_REPR) || defined(Py_NAN)
+    PyModule_AddObject(m, "nan", PyFloat_FromDouble(m_nan()));
+#endif
 
-    finally:
+  finally:
     return m;
 }

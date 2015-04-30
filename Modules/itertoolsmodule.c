@@ -1492,19 +1492,22 @@ islice_next(isliceobject *lz)
     Py_ssize_t oldnext;
     PyObject *(*iternext)(PyObject *);
 
+    if (it == NULL)
+        return NULL;
+
     iternext = *Py_TYPE(it)->tp_iternext;
     while (lz->cnt < lz->next) {
         item = iternext(it);
         if (item == NULL)
-            return NULL;
+            goto empty;
         Py_DECREF(item);
         lz->cnt++;
     }
     if (stop != -1 && lz->cnt >= stop)
-        return NULL;
+        goto empty;
     item = iternext(it);
     if (item == NULL)
-        return NULL;
+        goto empty;
     lz->cnt++;
     oldnext = lz->next;
     /* The (size_t) cast below avoids the danger of undefined
@@ -1513,6 +1516,10 @@ islice_next(isliceobject *lz)
     if (lz->next < oldnext || (stop != -1 && lz->next > stop))
         lz->next = stop;
     return item;
+
+empty:
+    Py_CLEAR(lz->it);
+    return NULL;
 }
 
 static PyObject *
@@ -1522,6 +1529,18 @@ islice_reduce(isliceobject *lz)
      * then 'setstate' with the next and count
      */
     PyObject *stop;
+    if (lz->it == NULL) {
+        PyObject *empty_list;
+        PyObject *empty_it;
+        empty_list = PyList_New(0);
+        if (empty_list == NULL)
+            return NULL;
+        empty_it = PyObject_GetIter(empty_list);
+        Py_DECREF(empty_list);
+        if (empty_it == NULL)
+            return NULL;
+        return Py_BuildValue("O(Nn)n", Py_TYPE(lz), empty_it, 0, 0);
+    }
     if (lz->stop == -1) {
         stop = Py_None;
         Py_INCREF(stop);
@@ -1998,11 +2017,19 @@ product_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
         }
     }
 
-    assert(PyTuple_Check(args));
-    nargs = (repeat == 0) ? 0 : PyTuple_GET_SIZE(args);
+    assert(PyTuple_CheckExact(args));
+    if (repeat == 0) {
+        nargs = 0;
+    } else {
+        nargs = PyTuple_GET_SIZE(args);
+        if ((size_t)nargs > PY_SSIZE_T_MAX/sizeof(Py_ssize_t)/repeat) {
+            PyErr_SetString(PyExc_OverflowError, "repeat argument too large");
+            return NULL;
+        }
+    }
     npools = nargs * repeat;
 
-    indices = PyMem_Malloc(npools * sizeof(Py_ssize_t));
+    indices = PyMem_New(Py_ssize_t, npools);
     if (indices == NULL) {
         PyErr_NoMemory();
         goto error;
@@ -2340,7 +2367,7 @@ combinations_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
         goto error;
     }
 
-    indices = PyMem_Malloc(r * sizeof(Py_ssize_t));
+    indices = PyMem_New(Py_ssize_t, r);
     if (indices == NULL) {
         PyErr_NoMemory();
         goto error;
@@ -2681,7 +2708,7 @@ cwr_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
         goto error;
     }
 
-    indices = PyMem_Malloc(r * sizeof(Py_ssize_t));
+    indices = PyMem_New(Py_ssize_t, r);
     if (indices == NULL) {
         PyErr_NoMemory();
         goto error;
@@ -3022,8 +3049,8 @@ permutations_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
         goto error;
     }
 
-    indices = PyMem_Malloc(n * sizeof(Py_ssize_t));
-    cycles = PyMem_Malloc(r * sizeof(Py_ssize_t));
+    indices = PyMem_New(Py_ssize_t, n);
+    cycles = PyMem_New(Py_ssize_t, r);
     if (indices == NULL || cycles == NULL) {
         PyErr_NoMemory();
         goto error;
@@ -3847,7 +3874,7 @@ typedef struct {
 
 fast_mode:  when cnt an integer < PY_SSIZE_T_MAX and no step is specified.
 
-    assert(cnt != PY_SSIZE_T_MAX && long_cnt == NULL && long_step==PyInt(1));
+    assert(cnt != PY_SSIZE_T_MAX && long_cnt == NULL && long_step==PyLong(1));
     Advances with:  cnt += 1
     When count hits Y_SSIZE_T_MAX, switch to slow_mode.
 
@@ -4090,14 +4117,17 @@ repeat_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
 {
     repeatobject *ro;
     PyObject *element;
-    Py_ssize_t cnt = -1;
+    Py_ssize_t cnt = -1, n_kwds = 0;
     static char *kwargs[] = {"object", "times", NULL};
 
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "O|n:repeat", kwargs,
                                      &element, &cnt))
         return NULL;
 
-    if (PyTuple_Size(args) == 2 && cnt < 0)
+    if (kwds != NULL)
+        n_kwds = PyDict_Size(kwds);
+    /* Does user supply times argument? */
+    if ((PyTuple_Size(args) + n_kwds == 2) && cnt < 0)
         cnt = 0;
 
     ro = (repeatobject *)type->tp_alloc(type, 0);

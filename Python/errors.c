@@ -74,11 +74,11 @@ PyErr_SetObject(PyObject *exception, PyObject *value)
         if (value == NULL || !PyExceptionInstance_Check(value)) {
             /* We must normalize the value right now */
             PyObject *args, *fixed_value;
-#ifdef Py_DEBUG
-            /* in debug mode, PyEval_EvalFrameEx() fails with an assertion
-               error if an exception is set when it is called */
+
+            /* Issue #23571: PyEval_CallObject() must not be called with an
+               exception set */
             PyErr_Clear();
-#endif
+
             if (value == NULL || value == Py_None)
                 args = PyTuple_New(0);
             else if (PyTuple_Check(value)) {
@@ -384,6 +384,30 @@ PyErr_SetExcInfo(PyObject *p_type, PyObject *p_value, PyObject *p_traceback)
     Py_XDECREF(oldtraceback);
 }
 
+/* Like PyErr_Restore(), but if an exception is already set,
+   set the context associated with it.
+ */
+void
+_PyErr_ChainExceptions(PyObject *exc, PyObject *val, PyObject *tb)
+{
+    if (exc == NULL)
+        return;
+
+    if (PyErr_Occurred()) {
+        PyObject *exc2, *val2, *tb2;
+        PyErr_Fetch(&exc2, &val2, &tb2);
+        PyErr_NormalizeException(&exc, &val, &tb);
+        Py_DECREF(exc);
+        Py_XDECREF(tb);
+        PyErr_NormalizeException(&exc2, &val2, &tb2);
+        PyException_SetContext(val2, val);
+        PyErr_Restore(exc2, val2, tb2);
+    }
+    else {
+        PyErr_Restore(exc, val, tb);
+    }
+}
+
 /* Convenience functions to set a type error exception and return 0 */
 
 int
@@ -467,7 +491,7 @@ PyErr_SetFromErrnoWithFilenameObjects(PyObject *exc, PyObject *filenameObject, P
                 /* Only ever seen this in out-of-mem
                    situations */
                 s_buf = NULL;
-                message = PyUnicode_FromFormat("Windows Error 0x%X", i);
+                message = PyUnicode_FromFormat("Windows Error 0x%x", i);
             } else {
                 /* remove trailing cr/lf and dots */
                 while (len > 0 && (s_buf[len-1] <= L' ' || s_buf[len-1] == L'.'))
@@ -576,7 +600,7 @@ PyObject *PyErr_SetExcFromWindowsErrWithFilenameObjects(
         NULL);          /* no args */
     if (len==0) {
         /* Only seen this in out of mem situations */
-        message = PyUnicode_FromFormat("Windows Error 0x%X", err);
+        message = PyUnicode_FromFormat("Windows Error 0x%x", err);
         s_buf = NULL;
     } else {
         /* remove trailing cr/lf and dots */
@@ -749,32 +773,36 @@ PyErr_BadInternalCall(void)
 #define PyErr_BadInternalCall() _PyErr_BadInternalCall(__FILE__, __LINE__)
 
 
+PyObject *
+PyErr_FormatV(PyObject *exception, const char *format, va_list vargs)
+{
+    PyObject* string;
+
+    /* Issue #23571: PyUnicode_FromFormatV() must not be called with an
+       exception set, it calls arbitrary Python code like PyObject_Repr() */
+    PyErr_Clear();
+
+    string = PyUnicode_FromFormatV(format, vargs);
+
+    PyErr_SetObject(exception, string);
+    Py_XDECREF(string);
+    return NULL;
+}
+
 
 PyObject *
 PyErr_Format(PyObject *exception, const char *format, ...)
 {
     va_list vargs;
-    PyObject* string;
-
 #ifdef HAVE_STDARG_PROTOTYPES
     va_start(vargs, format);
 #else
     va_start(vargs);
 #endif
-
-#ifdef Py_DEBUG
-    /* in debug mode, PyEval_EvalFrameEx() fails with an assertion error
-       if an exception is set when it is called */
-    PyErr_Clear();
-#endif
-
-    string = PyUnicode_FromFormatV(format, vargs);
-    PyErr_SetObject(exception, string);
-    Py_XDECREF(string);
+    PyErr_FormatV(exception, format, vargs);
     va_end(vargs);
     return NULL;
 }
-
 
 
 PyObject *
@@ -1097,6 +1125,10 @@ PyErr_ProgramTextObject(PyObject *filename, int lineno)
     if (filename == NULL || lineno <= 0)
         return NULL;
     fp = _Py_fopen_obj(filename, "r" PY_STDIOTEXTMODE);
+    if (fp == NULL) {
+        PyErr_Clear();
+        return NULL;
+    }
     return err_programtext(fp, lineno);
 }
 

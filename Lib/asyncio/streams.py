@@ -10,10 +10,12 @@ import socket
 if hasattr(socket, 'AF_UNIX'):
     __all__.extend(['open_unix_connection', 'start_unix_server'])
 
+from . import coroutines
 from . import events
 from . import futures
 from . import protocols
-from . import tasks
+from .coroutines import coroutine
+from .log import logger
 
 
 _DEFAULT_LIMIT = 2**16
@@ -33,7 +35,7 @@ class IncompleteReadError(EOFError):
         self.expected = expected
 
 
-@tasks.coroutine
+@coroutine
 def open_connection(host=None, port=None, *,
                     loop=None, limit=_DEFAULT_LIMIT, **kwds):
     """A wrapper for create_connection() returning a (reader, writer) pair.
@@ -63,7 +65,7 @@ def open_connection(host=None, port=None, *,
     return reader, writer
 
 
-@tasks.coroutine
+@coroutine
 def start_server(client_connected_cb, host=None, port=None, *,
                  loop=None, limit=_DEFAULT_LIMIT, **kwds):
     """Start a socket server, call back for each client connected.
@@ -102,7 +104,7 @@ def start_server(client_connected_cb, host=None, port=None, *,
 if hasattr(socket, 'AF_UNIX'):
     # UNIX Domain Sockets are supported on this platform
 
-    @tasks.coroutine
+    @coroutine
     def open_unix_connection(path=None, *,
                              loop=None, limit=_DEFAULT_LIMIT, **kwds):
         """Similar to `open_connection` but works with UNIX Domain Sockets."""
@@ -116,7 +118,7 @@ if hasattr(socket, 'AF_UNIX'):
         return reader, writer
 
 
-    @tasks.coroutine
+    @coroutine
     def start_unix_server(client_connected_cb, path=None, *,
                           loop=None, limit=_DEFAULT_LIMIT, **kwds):
         """Similar to `start_server` but works with UNIX Domain Sockets."""
@@ -139,23 +141,30 @@ class FlowControlMixin(protocols.Protocol):
     resume_reading() and connection_lost().  If the subclass overrides
     these it must call the super methods.
 
-    StreamWriter.drain() must check for error conditions and then call
-    _make_drain_waiter(), which will return either () or a Future
-    depending on the paused state.
+    StreamWriter.drain() must wait for _drain_helper() coroutine.
     """
 
     def __init__(self, loop=None):
-        self._loop = loop  # May be None; we may never need it.
+        if loop is None:
+            self._loop = events.get_event_loop()
+        else:
+            self._loop = loop
         self._paused = False
         self._drain_waiter = None
+        self._connection_lost = False
 
     def pause_writing(self):
         assert not self._paused
         self._paused = True
+        if self._loop.get_debug():
+            logger.debug("%r pauses writing", self)
 
     def resume_writing(self):
         assert self._paused
         self._paused = False
+        if self._loop.get_debug():
+            logger.debug("%r resumes writing", self)
+
         waiter = self._drain_waiter
         if waiter is not None:
             self._drain_waiter = None
@@ -163,6 +172,7 @@ class FlowControlMixin(protocols.Protocol):
                 waiter.set_result(None)
 
     def connection_lost(self, exc):
+        self._connection_lost = True
         # Wake up the writer if currently paused.
         if not self._paused:
             return
@@ -177,14 +187,17 @@ class FlowControlMixin(protocols.Protocol):
         else:
             waiter.set_exception(exc)
 
-    def _make_drain_waiter(self):
+    @coroutine
+    def _drain_helper(self):
+        if self._connection_lost:
+            raise ConnectionResetError('Connection lost')
         if not self._paused:
-            return ()
+            return
         waiter = self._drain_waiter
         assert waiter is None or waiter.cancelled()
         waiter = futures.Future(loop=self._loop)
         self._drain_waiter = waiter
-        return waiter
+        yield from waiter
 
 
 class StreamReaderProtocol(FlowControlMixin, protocols.Protocol):
@@ -210,8 +223,8 @@ class StreamReaderProtocol(FlowControlMixin, protocols.Protocol):
                                                self._loop)
             res = self._client_connected_cb(self._stream_reader,
                                             self._stream_writer)
-            if tasks.iscoroutine(res):
-                tasks.Task(res, loop=self._loop)
+            if coroutines.iscoroutine(res):
+                self._loop.create_task(res)
 
     def connection_lost(self, exc):
         if exc is None:
@@ -240,8 +253,16 @@ class StreamWriter:
     def __init__(self, transport, protocol, reader, loop):
         self._transport = transport
         self._protocol = protocol
+        # drain() expects that the reader has a exception() method
+        assert reader is None or isinstance(reader, StreamReader)
         self._reader = reader
         self._loop = loop
+
+    def __repr__(self):
+        info = [self.__class__.__name__, 'transport=%r' % self._transport]
+        if self._reader is not None:
+            info.append('reader=%r' % self._reader)
+        return '<%s>' % ' '.join(info)
 
     @property
     def transport(self):
@@ -265,26 +286,20 @@ class StreamWriter:
     def get_extra_info(self, name, default=None):
         return self._transport.get_extra_info(name, default)
 
+    @coroutine
     def drain(self):
-        """This method has an unusual return value.
+        """Flush the write buffer.
 
         The intended use is to write
 
           w.write(data)
           yield from w.drain()
-
-        When there's nothing to wait for, drain() returns (), and the
-        yield-from continues immediately.  When the transport buffer
-        is full (the protocol is paused), drain() creates and returns
-        a Future and the yield-from will block until that Future is
-        completed, which will happen when the buffer is (partially)
-        drained and the protocol is resumed.
         """
-        if self._reader is not None and self._reader._exception is not None:
-            raise self._reader._exception
-        if self._transport._conn_lost:  # Uses private variable.
-            raise ConnectionResetError('Connection lost')
-        return self._protocol._make_drain_waiter()
+        if self._reader is not None:
+            exc = self._reader.exception()
+            if exc is not None:
+                raise exc
+        yield from self._protocol._drain_helper()
 
 
 class StreamReader:
@@ -294,11 +309,12 @@ class StreamReader:
         # it also doubles as half the buffer limit.
         self._limit = limit
         if loop is None:
-            loop = events.get_event_loop()
-        self._loop = loop
+            self._loop = events.get_event_loop()
+        else:
+            self._loop = loop
         self._buffer = bytearray()
-        self._eof = False  # Whether we're done.
-        self._waiter = None  # A future.
+        self._eof = False    # Whether we're done.
+        self._waiter = None  # A future used by _wait_for_data()
         self._exception = None
         self._transport = None
         self._paused = False
@@ -315,6 +331,14 @@ class StreamReader:
             if not waiter.cancelled():
                 waiter.set_exception(exc)
 
+    def _wakeup_waiter(self):
+        """Wakeup read() or readline() function waiting for data or EOF."""
+        waiter = self._waiter
+        if waiter is not None:
+            self._waiter = None
+            if not waiter.cancelled():
+                waiter.set_result(None)
+
     def set_transport(self, transport):
         assert self._transport is None, 'Transport already set'
         self._transport = transport
@@ -326,11 +350,7 @@ class StreamReader:
 
     def feed_eof(self):
         self._eof = True
-        waiter = self._waiter
-        if waiter is not None:
-            self._waiter = None
-            if not waiter.cancelled():
-                waiter.set_result(True)
+        self._wakeup_waiter()
 
     def at_eof(self):
         """Return True if the buffer is empty and 'feed_eof' was called."""
@@ -343,12 +363,7 @@ class StreamReader:
             return
 
         self._buffer.extend(data)
-
-        waiter = self._waiter
-        if waiter is not None:
-            self._waiter = None
-            if not waiter.cancelled():
-                waiter.set_result(False)
+        self._wakeup_waiter()
 
         if (self._transport is not None and
             not self._paused and
@@ -363,7 +378,9 @@ class StreamReader:
             else:
                 self._paused = True
 
-    def _create_waiter(self, func_name):
+    @coroutine
+    def _wait_for_data(self, func_name):
+        """Wait until feed_data() or feed_eof() is called."""
         # StreamReader uses a future to link the protocol feed_data() method
         # to a read coroutine. Running two read coroutines at the same time
         # would have an unexpected behaviour. It would not possible to know
@@ -371,9 +388,14 @@ class StreamReader:
         if self._waiter is not None:
             raise RuntimeError('%s() called while another coroutine is '
                                'already waiting for incoming data' % func_name)
-        return futures.Future(loop=self._loop)
 
-    @tasks.coroutine
+        self._waiter = futures.Future(loop=self._loop)
+        try:
+            yield from self._waiter
+        finally:
+            self._waiter = None
+
+    @coroutine
     def readline(self):
         if self._exception is not None:
             raise self._exception
@@ -401,16 +423,12 @@ class StreamReader:
                 break
 
             if not_enough:
-                self._waiter = self._create_waiter('readline')
-                try:
-                    yield from self._waiter
-                finally:
-                    self._waiter = None
+                yield from self._wait_for_data('readline')
 
         self._maybe_resume_transport()
         return bytes(line)
 
-    @tasks.coroutine
+    @coroutine
     def read(self, n=-1):
         if self._exception is not None:
             raise self._exception
@@ -419,19 +437,20 @@ class StreamReader:
             return b''
 
         if n < 0:
-            while not self._eof:
-                self._waiter = self._create_waiter('read')
-                try:
-                    yield from self._waiter
-                finally:
-                    self._waiter = None
+            # This used to just loop creating a new waiter hoping to
+            # collect everything in self._buffer, but that would
+            # deadlock if the subprocess sends more than self.limit
+            # bytes.  So just call self.read(self._limit) until EOF.
+            blocks = []
+            while True:
+                block = yield from self.read(self._limit)
+                if not block:
+                    break
+                blocks.append(block)
+            return b''.join(blocks)
         else:
             if not self._buffer and not self._eof:
-                self._waiter = self._create_waiter('read')
-                try:
-                    yield from self._waiter
-                finally:
-                    self._waiter = None
+                yield from self._wait_for_data('read')
 
         if n < 0 or len(self._buffer) <= n:
             data = bytes(self._buffer)
@@ -444,7 +463,7 @@ class StreamReader:
         self._maybe_resume_transport()
         return data
 
-    @tasks.coroutine
+    @coroutine
     def readexactly(self, n):
         if self._exception is not None:
             raise self._exception

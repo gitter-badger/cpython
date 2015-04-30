@@ -22,7 +22,7 @@ from test import support
 from test.support import run_unittest, findfile, python_is_optimized
 
 try:
-    gdb_version, _ = subprocess.Popen(["gdb", "--version"],
+    gdb_version, _ = subprocess.Popen(["gdb", "-nx", "--version"],
                                       stdout=subprocess.PIPE).communicate()
 except OSError:
     # This is what "no gdb" looks like.  There may, however, be other
@@ -54,7 +54,9 @@ def run_gdb(*args, **env_vars):
         env.update(env_vars)
     else:
         env = None
-    base_cmd = ('gdb', '--batch')
+    # -nx: Do not execute commands from any .gdbinit initialization files
+    #      (issue #22188)
+    base_cmd = ('gdb', '--batch', '-nx')
     if (gdb_major_version, gdb_minor_version) >= (7, 4):
         base_cmd += ('-iex', 'add-auto-load-safe-path ' + checkout_hook_path)
     out, err = subprocess.Popen(base_cmd + args,
@@ -121,7 +123,28 @@ class DebuggerTests(unittest.TestCase):
         # Generate a list of commands in gdb's language:
         commands = ['set breakpoint pending yes',
                     'break %s' % breakpoint,
+
+                    # The tests assume that the first frame of printed
+                    #  backtrace will not contain program counter,
+                    #  that is however not guaranteed by gdb
+                    #  therefore we need to use 'set print address off' to
+                    #  make sure the counter is not there. For example:
+                    # #0 in PyObject_Print ...
+                    #  is assumed, but sometimes this can be e.g.
+                    # #0 0x00003fffb7dd1798 in PyObject_Print ...
+                    'set print address off',
+
                     'run']
+
+        # GDB as of 7.4 onwards can distinguish between the
+        # value of a variable at entry vs current value:
+        #   http://sourceware.org/gdb/onlinedocs/gdb/Variables.html
+        # which leads to the selftests failing with errors like this:
+        #   AssertionError: 'v@entry=()' != '()'
+        # Disable this:
+        if (gdb_major_version, gdb_minor_version) >= (7, 4):
+            commands += ['set print entry-values no']
+
         if cmds_after_breakpoint:
             commands += cmds_after_breakpoint
         else:
@@ -130,7 +153,7 @@ class DebuggerTests(unittest.TestCase):
         # print commands
 
         # Use "commands" to generate the arguments with which to invoke "gdb":
-        args = ["gdb", "--batch"]
+        args = ["gdb", "--batch", "-nx"]
         args += ['--eval-command=%s' % cmd for cmd in commands]
         args += ["--args",
                  sys.executable]
@@ -167,6 +190,8 @@ class DebuggerTests(unittest.TestCase):
             'linux-vdso.so',
             'warning: Could not load shared library symbols for '
             'linux-gate.so',
+            'warning: Could not load shared library symbols for '
+            'linux-vdso64.so',
             'Do you need "set solib-search-path" or '
             '"set sysroot"?',
             'warning: Source file is more recent than executable.',
@@ -777,25 +802,27 @@ id(42)
                          "Python was compiled without thread support")
     def test_pycfunction(self):
         'Verify that "py-bt" displays invocations of PyCFunction instances'
-        cmd = ('from time import sleep\n'
+        # Tested function must not be defined with METH_NOARGS or METH_O,
+        # otherwise call_function() doesn't call PyCFunction_Call()
+        cmd = ('from time import gmtime\n'
                'def foo():\n'
-               '    sleep(1)\n'
+               '    gmtime(1)\n'
                'def bar():\n'
                '    foo()\n'
                'bar()\n')
         # Verify with "py-bt":
         gdb_output = self.get_stack_trace(cmd,
-                                          breakpoint='time_sleep',
+                                          breakpoint='time_gmtime',
                                           cmds_after_breakpoint=['bt', 'py-bt'],
                                           )
-        self.assertIn('<built-in method sleep', gdb_output)
+        self.assertIn('<built-in method gmtime', gdb_output)
 
         # Verify with "py-bt-full":
         gdb_output = self.get_stack_trace(cmd,
-                                          breakpoint='time_sleep',
+                                          breakpoint='time_gmtime',
                                           cmds_after_breakpoint=['py-bt-full'],
                                           )
-        self.assertIn('#0 <built-in method sleep', gdb_output)
+        self.assertIn('#0 <built-in method gmtime', gdb_output)
 
 
 class PyPrintTests(DebuggerTests):

@@ -871,8 +871,10 @@ Py2Reg(PyObject *value, DWORD typ, BYTE **retDataBuf, DWORD *retDataSize)
         /* ALSO handle ALL unknown data types here.  Even if we can't
            support it natively, we should handle the bits. */
         default:
-            if (value == Py_None)
+            if (value == Py_None) {
                 *retDataSize = 0;
+                *retDataBuf = NULL;
+            }
             else {
                 Py_buffer view;
 
@@ -937,7 +939,7 @@ Reg2Py(BYTE *retDataBuf, DWORD retDataSize, DWORD typ)
                 wchar_t *data = (wchar_t *)retDataBuf;
                 int len = retDataSize / 2;
                 int s = countStrings(data, len);
-                wchar_t **str = (wchar_t **)PyMem_Malloc(sizeof(wchar_t *)*s);
+                wchar_t **str = PyMem_New(wchar_t *, s);
                 if (str == NULL)
                     return PyErr_NoMemory();
 
@@ -1204,7 +1206,7 @@ PyEnumValue(PyObject *self, PyObject *args)
     ++retDataSize;
     bufDataSize = retDataSize;
     bufValueSize = retValueSize;
-    retValueBuf = (wchar_t *)PyMem_Malloc(sizeof(wchar_t) * retValueSize);
+    retValueBuf = PyMem_New(wchar_t, retValueSize);
     if (retValueBuf == NULL)
         return PyErr_NoMemory();
     retDataBuf = (BYTE *)PyMem_Malloc(retDataSize);
@@ -1275,7 +1277,7 @@ PyExpandEnvironmentStrings(PyObject *self, PyObject *args)
         return PyErr_SetFromWindowsErrWithFunction(retValueSize,
                                         "ExpandEnvironmentStrings");
     }
-    retValue = (wchar_t *)PyMem_Malloc(retValueSize * sizeof(wchar_t));
+    retValue = PyMem_New(wchar_t, retValueSize);
     if (retValue == NULL) {
         return PyErr_NoMemory();
     }

@@ -1160,7 +1160,7 @@ c_set(void *ptr, PyObject *value, Py_ssize_t size)
     }
   error:
     PyErr_Format(PyExc_TypeError,
-                 "one character string expected");
+                 "one character bytes, bytearray or integer expected");
     return NULL;
 }
 
@@ -1295,7 +1295,7 @@ s_set(void *ptr, PyObject *value, Py_ssize_t length)
         Py_INCREF(value);
     } else {
         PyErr_Format(PyExc_TypeError,
-                     "expected string, %s found",
+                     "expected bytes, %s found",
                      value->ob_type->tp_name);
         return NULL;
     }
@@ -1311,7 +1311,7 @@ s_set(void *ptr, PyObject *value, Py_ssize_t length)
         ++size;
     } else if (size > length) {
         PyErr_Format(PyExc_ValueError,
-                     "string too long (%zd, maximum length %zd)",
+                     "bytes too long (%zd, maximum length %zd)",
                      size, length);
         Py_DECREF(value);
         return NULL;
@@ -1354,14 +1354,6 @@ z_get(void *ptr, Py_ssize_t size)
 {
     /* XXX What about invalid pointers ??? */
     if (*(void **)ptr) {
-#if defined(MS_WIN32) && !defined(_WIN32_WCE)
-        if (IsBadStringPtrA(*(char **)ptr, -1)) {
-            PyErr_Format(PyExc_ValueError,
-                         "invalid string pointer %p",
-                         *(char **)ptr);
-            return NULL;
-        }
-#endif
         return PyBytes_FromStringAndSize(*(char **)ptr,
                                          strlen(*(char **)ptr));
     } else {
@@ -1418,14 +1410,6 @@ Z_get(void *ptr, Py_ssize_t size)
     wchar_t *p;
     p = *(wchar_t **)ptr;
     if (p) {
-#if defined(MS_WIN32) && !defined(_WIN32_WCE)
-        if (IsBadStringPtrW(*(wchar_t **)ptr, -1)) {
-            PyErr_Format(PyExc_ValueError,
-                         "invalid string pointer %p",
-                         *(wchar_t **)ptr);
-            return NULL;
-        }
-#endif
         return PyUnicode_FromWideChar(p, wcslen(p));
     } else {
         Py_INCREF(Py_None);
@@ -1455,15 +1439,15 @@ BSTR_set(void *ptr, PyObject *value, Py_ssize_t size)
     /* create a BSTR from value */
     if (value) {
         wchar_t* wvalue;
-        Py_ssize_t size;
-        wvalue = PyUnicode_AsUnicodeAndSize(value, &size);
+        Py_ssize_t wsize;
+        wvalue = PyUnicode_AsUnicodeAndSize(value, &wsize);
         if (wvalue == NULL)
             return NULL;
-        if ((unsigned) size != size) {
+        if ((unsigned) wsize != wsize) {
             PyErr_SetString(PyExc_ValueError, "String too long for BSTR");
             return NULL;
         }
-        bstr = SysAllocStringLen(wvalue, (unsigned)size);
+        bstr = SysAllocStringLen(wvalue, (unsigned)wsize);
         Py_DECREF(value);
     } else
         bstr = NULL;

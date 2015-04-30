@@ -1,6 +1,6 @@
 # Python test set -- part 6, built-in types
 
-from test.support import run_unittest, run_with_locale
+from test.support import run_with_locale
 import collections
 import pickle
 import locale
@@ -343,6 +343,8 @@ class TypesTests(unittest.TestCase):
         self.assertRaises(ValueError, 3 .__format__, ",n")
         # can't have ',' with 'c'
         self.assertRaises(ValueError, 3 .__format__, ",c")
+        # can't have '#' with 'c'
+        self.assertRaises(ValueError, 3 .__format__, "#c")
 
         # ensure that only int and float type specifiers work
         for format_spec in ([chr(x) for x in range(ord('a'), ord('z')+1)] +
@@ -1170,9 +1172,5 @@ class SimpleNamespaceTests(unittest.TestCase):
             self.assertEqual(ns, ns_roundtrip, pname)
 
 
-def test_main():
-    run_unittest(TypesTests, MappingProxyTests, ClassCreationTests,
-                 SimpleNamespaceTests)
-
 if __name__ == '__main__':
-    test_main()
+    unittest.main()

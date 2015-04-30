@@ -60,11 +60,12 @@ DOUBLESTAREQUAL = 46
 DOUBLESLASH = 47
 DOUBLESLASHEQUAL = 48
 AT = 49
-RARROW = 50
-ELLIPSIS = 51
-OP = 52
-ERRORTOKEN = 53
-N_TOKENS = 54
+ATEQUAL = 50
+RARROW = 51
+ELLIPSIS = 52
+OP = 53
+ERRORTOKEN = 54
+N_TOKENS = 55
 NT_OFFSET = 256
 #--end constants--
 
@@ -96,8 +97,8 @@ def _main():
     except OSError as err:
         sys.stdout.write("I/O error: %s\n" % str(err))
         sys.exit(1)
-    lines = fp.read().split("\n")
-    fp.close()
+    with fp:
+        lines = fp.read().split("\n")
     prog = re.compile(
         "#define[ \t][ \t]*([A-Z0-9][A-Z0-9_]*)[ \t][ \t]*([0-9][0-9]*)",
         re.IGNORECASE)
@@ -115,8 +116,8 @@ def _main():
     except OSError as err:
         sys.stderr.write("I/O error: %s\n" % str(err))
         sys.exit(2)
-    format = fp.read().split("\n")
-    fp.close()
+    with fp:
+        format = fp.read().split("\n")
     try:
         start = format.index("#--start constants--") + 1
         end = format.index("#--end constants--")
@@ -132,8 +133,8 @@ def _main():
     except OSError as err:
         sys.stderr.write("I/O error: %s\n" % str(err))
         sys.exit(4)
-    fp.write("\n".join(format))
-    fp.close()
+    with fp:
+        fp.write("\n".join(format))
 
 
 if __name__ == "__main__":

@@ -159,6 +159,18 @@ The :mod:`csv` module defines the following classes:
    the optional *restval* parameter.  Any other optional or keyword arguments
    are passed to the underlying :class:`reader` instance.
 
+   A short usage example::
+
+       >>> import csv
+       >>> with open('names.csv') as csvfile:
+       ...     reader = csv.DictReader(csvfile)
+       ...     for row in reader:
+       ...         print(row['first_name'], row['last_name'])
+       ...
+       Baked Beans
+       Lovely Spam
+       Wonderful Spam
+
 
 .. class:: DictWriter(csvfile, fieldnames, restval='', extrasaction='raise', \
                       dialect='excel', *args, **kwds)
@@ -180,6 +192,19 @@ The :mod:`csv` module defines the following classes:
    of the :class:`DictWriter` is not optional.  Since Python's :class:`dict`
    objects are not ordered, there is not enough information available to deduce
    the order in which the row should be written to the *csvfile*.
+
+   A short usage example::
+
+       import csv
+
+       with open('names.csv', 'w') as csvfile:
+           fieldnames = ['first_name', 'last_name']
+           writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+           writer.writeheader()
+           writer.writerow({'first_name': 'Baked', 'last_name': 'Beans'})
+           writer.writerow({'first_name': 'Lovely', 'last_name': 'Spam'})
+           writer.writerow({'first_name': 'Wonderful', 'last_name': 'Spam'})
 
 
 .. class:: Dialect
@@ -394,7 +419,7 @@ Writer Objects
 
 :class:`Writer` objects (:class:`DictWriter` instances and objects returned by
 the :func:`writer` function) have the following public methods.  A *row* must be
-a sequence of strings or numbers for :class:`Writer` objects and a dictionary
+an iterable of strings or numbers for :class:`Writer` objects and a dictionary
 mapping fieldnames to strings or numbers (by passing them through :func:`str`
 first) for :class:`DictWriter` objects.  Note that complex numbers are written
 out surrounded by parens. This may cause some problems for other programs which
@@ -406,6 +431,8 @@ read CSV files (assuming they support complex numbers at all).
    Write the *row* parameter to the writer's file object, formatted according to
    the current dialect.
 
+   .. versionchanged:: 3.5
+      Added support of arbitrary iterables.
 
 .. method:: csvwriter.writerows(rows)
 

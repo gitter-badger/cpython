@@ -60,8 +60,7 @@ _modifier_names = dict([(name, number)
 # destroyed before .__del__ methods here are called.  The following
 # is used to selectively ignore shutdown exceptions to avoid
 # 'Exception ignored' messages.  See http://bugs.python.org/issue20167
-APPLICATION_GONE = '''\
-can't invoke "bind" command:  application has been destroyed'''
+APPLICATION_GONE = "application has been destroyed"
 
 # A binder is a class which binds functions to one type of event. It has two
 # methods: bind and unbind, which get a function and a parsed sequence, as
@@ -108,9 +107,7 @@ class _SimpleBinder:
                 self.widget.unbind(self.widgetinst, self.sequence,
                         self.handlerid)
             except tkinter.TclError as e:
-                if e.args[0] == APPLICATION_GONE:
-                    pass
-                else:
+                if not APPLICATION_GONE in e.args[0]:
                     raise
 
 # An int in range(1 << len(_modifiers)) represents a combination of modifiers
@@ -243,9 +240,7 @@ class _ComplexBinder:
             try:
                 self.widget.unbind(self.widgetinst, seq, id)
             except tkinter.TclError as e:
-                if e.args[0] == APPLICATION_GONE:
-                    break
-                else:
+                if not APPLICATION_GONE in e.args[0]:
                     raise
 
 # define the list of event types to be handled by MultiEvent. the order is
@@ -412,17 +407,18 @@ def MultiCallCreator(widget):
                         try:
                             self.__binders[triplet[1]].unbind(triplet, func)
                         except tkinter.TclError as e:
-                            if e.args[0] == APPLICATION_GONE:
-                                break
-                            else:
+                            if not APPLICATION_GONE in e.args[0]:
                                 raise
 
     _multicall_dict[widget] = MultiCall
     return MultiCall
 
-if __name__ == "__main__":
-    # Test
+
+def _multi_call(parent):
     root = tkinter.Tk()
+    root.title("Test MultiCall")
+    width, height, x, y = list(map(int, re.split('[x+]', parent.geometry())))
+    root.geometry("+%d+%d"%(x, y + 150))
     text = MultiCallCreator(tkinter.Text)(root)
     text.pack()
     def bindseq(seq, n=[0]):
@@ -438,8 +434,13 @@ if __name__ == "__main__":
     bindseq("<Alt-Control-Key-a>")
     bindseq("<Key-b>")
     bindseq("<Control-Button-1>")
+    bindseq("<Button-2>")
     bindseq("<Alt-Button-1>")
     bindseq("<FocusOut>")
     bindseq("<Enter>")
     bindseq("<Leave>")
     root.mainloop()
+
+if __name__ == "__main__":
+    from idlelib.idle_test.htest import run
+    run(_multi_call)

@@ -47,7 +47,6 @@ ste_new(struct symtable *st, identifier name, _Py_block_ty block,
     ste->ste_directives = NULL;
 
     ste->ste_type = block;
-    ste->ste_unoptimized = 0;
     ste->ste_nested = 0;
     ste->ste_free = 0;
     ste->ste_varargs = 0;
@@ -113,7 +112,6 @@ static PyMemberDef ste_memberlist[] = {
     {"symbols",  T_OBJECT, OFF(ste_symbols), READONLY},
     {"varnames", T_OBJECT, OFF(ste_varnames), READONLY},
     {"children", T_OBJECT, OFF(ste_children), READONLY},
-    {"optimized",T_INT,    OFF(ste_unoptimized), READONLY},
     {"nested",   T_INT,    OFF(ste_nested), READONLY},
     {"type",     T_INT,    OFF(ste_type), READONLY},
     {"lineno",   T_INT,    OFF(ste_lineno), READONLY},
@@ -271,7 +269,6 @@ PySymtable_BuildObject(mod_ty mod, PyObject *filename, PyFutureFeatures *future)
     }
 
     st->st_top = st->st_cur;
-    st->st_cur->ste_unoptimized = OPT_TOPLEVEL;
     switch (mod->kind) {
     case Module_kind:
         seq = mod->v.Module.body;
@@ -583,35 +580,6 @@ drop_class_free(PySTEntryObject *ste, PyObject *free)
     return 1;
 }
 
-/* Check for illegal statements in unoptimized namespaces */
-static int
-check_unoptimized(const PySTEntryObject* ste) {
-    const char* trailer;
-
-    if (ste->ste_type != FunctionBlock || !ste->ste_unoptimized
-        || !(ste->ste_free || ste->ste_child_free))
-        return 1;
-
-    trailer = (ste->ste_child_free ?
-                   "contains a nested function with free variables" :
-                   "is a nested function");
-
-    switch (ste->ste_unoptimized) {
-    case OPT_TOPLEVEL: /* import * at top-level is fine */
-        return 1;
-    case OPT_IMPORT_STAR:
-        PyErr_Format(PyExc_SyntaxError,
-                     "import * is not allowed in function '%U' because it %s",
-                     ste->ste_name, trailer);
-        break;
-    }
-
-    PyErr_SyntaxLocationObject(ste->ste_table->st_filename,
-                               ste->ste_opt_lineno,
-                               ste->ste_opt_col_offset);
-    return 0;
-}
-
 /* Enter the final scope information into the ste_symbols dict.
  *
  * All arguments are dicts.  Modifies symbols, others are read-only.
@@ -853,8 +821,6 @@ analyze_block(PySTEntryObject *ste, PyObject *bound, PyObject *free,
     /* Records the results of the analysis in the symbol table entry */
     if (!update_symbols(ste->ste_symbols, scopes, bound, newfree,
                         ste->ste_type == ClassBlock))
-        goto error;
-    if (!check_unoptimized(ste))
         goto error;
 
     temp = PyNumber_InPlaceOr(free, newfree);
@@ -1276,21 +1242,9 @@ symtable_visit_stmt(struct symtable *st, stmt_ty s)
         break;
     case Import_kind:
         VISIT_SEQ(st, alias, s->v.Import.names);
-        /* XXX Don't have the lineno available inside
-           visit_alias */
-        if (st->st_cur->ste_unoptimized && !st->st_cur->ste_opt_lineno) {
-            st->st_cur->ste_opt_lineno = s->lineno;
-            st->st_cur->ste_opt_col_offset = s->col_offset;
-        }
         break;
     case ImportFrom_kind:
         VISIT_SEQ(st, alias, s->v.ImportFrom.names);
-        /* XXX Don't have the lineno available inside
-           visit_alias */
-        if (st->st_cur->ste_unoptimized && !st->st_cur->ste_opt_lineno) {
-            st->st_cur->ste_opt_lineno = s->lineno;
-            st->st_cur->ste_opt_col_offset = s->col_offset;
-        }
         break;
     case Global_kind: {
         int i;
@@ -1646,7 +1600,6 @@ symtable_visit_alias(struct symtable *st, alias_ty a)
             Py_DECREF(store_name);
             return 0;
         }
-        st->st_cur->ste_unoptimized |= OPT_IMPORT_STAR;
         Py_DECREF(store_name);
         return 1;
     }

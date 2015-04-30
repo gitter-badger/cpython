@@ -1,4 +1,5 @@
-; When changing this file, run python35gen.py
+; This file specifies the import forwarding for python3.dll
+; It is used when building python3dll.vcxproj
 LIBRARY	"python3"
 EXPORTS
   PyArg_Parse=python35.PyArg_Parse
@@ -120,6 +121,7 @@ EXPORTS
   PyErr_ExceptionMatches=python35.PyErr_ExceptionMatches
   PyErr_Fetch=python35.PyErr_Fetch
   PyErr_Format=python35.PyErr_Format
+  PyErr_FormatV=python35.PyErr_FormatV
   PyErr_GivenExceptionMatches=python35.PyErr_GivenExceptionMatches
   PyErr_NewException=python35.PyErr_NewException
   PyErr_NewExceptionWithDoc=python35.PyErr_NewExceptionWithDoc

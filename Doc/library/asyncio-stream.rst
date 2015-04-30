@@ -9,7 +9,7 @@ Streams (high-level API)
 Stream functions
 ================
 
-.. function:: open_connection(host=None, port=None, \*, loop=None, limit=None, **kwds)
+.. coroutinefunction:: open_connection(host=None, port=None, \*, loop=None, limit=None, \*\*kwds)
 
    A wrapper for :meth:`~BaseEventLoop.create_connection()` returning a (reader,
    writer) pair.
@@ -32,33 +32,31 @@ Stream functions
 
    This function is a :ref:`coroutine <coroutine>`.
 
-.. function:: start_server(client_connected_cb, host=None, port=None, \*, loop=None, limit=None, **kwds)
+.. coroutinefunction:: start_server(client_connected_cb, host=None, port=None, \*, loop=None, limit=None, \*\*kwds)
 
-   Start a socket server, with a callback for each client connected.
+   Start a socket server, with a callback for each client connected. The return
+   value is the same as :meth:`~BaseEventLoop.create_server()`.
 
-   The first parameter, *client_connected_cb*, takes two parameters:
+   The *client_connected_cb* parameter is called with two parameters:
    *client_reader*, *client_writer*.  *client_reader* is a
    :class:`StreamReader` object, while *client_writer* is a
-   :class:`StreamWriter` object.  This parameter can either be a plain callback
-   function or a :ref:`coroutine function <coroutine>`; if it is a coroutine
-   function, it will be automatically converted into a :class:`Task`.
+   :class:`StreamWriter` object.  The *client_connected_cb* parameter can
+   either be a plain callback function or a :ref:`coroutine function
+   <coroutine>`; if it is a coroutine function, it will be automatically
+   converted into a :class:`Task`.
 
    The rest of the arguments are all the usual arguments to
    :meth:`~BaseEventLoop.create_server()` except *protocol_factory*; most
-   common are positional host and port, with various optional keyword arguments
-   following.  The return value is the same as
-   :meth:`~BaseEventLoop.create_server()`.
+   common are positional *host* and *port*, with various optional keyword
+   arguments following.
 
    Additional optional keyword arguments are *loop* (to set the event loop
    instance to use) and *limit* (to set the buffer limit passed to the
    :class:`StreamReader`).
 
-   The return value is the same as :meth:`~BaseEventLoop.create_server()`, i.e.
-   a :class:`AbstractServer` object which can be used to stop the service.
-
    This function is a :ref:`coroutine <coroutine>`.
 
-.. function:: open_unix_connection(path=None, \*, loop=None, limit=None, **kwds)
+.. coroutinefunction:: open_unix_connection(path=None, \*, loop=None, limit=None, **kwds)
 
    A wrapper for :meth:`~BaseEventLoop.create_unix_connection()` returning
    a (reader, writer) pair.
@@ -70,7 +68,7 @@ Stream functions
 
    Availability: UNIX.
 
-.. function:: start_unix_server(client_connected_cb, path=None, \*, loop=None, limit=None, **kwds)
+.. coroutinefunction:: start_unix_server(client_connected_cb, path=None, \*, loop=None, limit=None, **kwds)
 
    Start a UNIX Domain Socket server, with a callback for each client connected.
 
@@ -86,6 +84,8 @@ StreamReader
 ============
 
 .. class:: StreamReader(limit=None, loop=None)
+
+   This class is :ref:`not thread safe <asyncio-multithreading>`.
 
    .. method:: exception()
 
@@ -108,7 +108,7 @@ StreamReader
 
       Set the transport.
 
-   .. method:: read(n=-1)
+   .. coroutinemethod:: read(n=-1)
 
       Read up to *n* bytes.  If *n* is not provided, or set to ``-1``,
       read until EOF and return all read bytes.
@@ -118,7 +118,7 @@ StreamReader
 
       This method is a :ref:`coroutine <coroutine>`.
 
-   .. method:: readline()
+   .. coroutinemethod:: readline()
 
       Read one line, where "line" is a sequence of bytes ending with ``\n``.
 
@@ -130,7 +130,7 @@ StreamReader
 
       This method is a :ref:`coroutine <coroutine>`.
 
-   .. method:: readexactly(n)
+   .. coroutinemethod:: readexactly(n)
 
       Read exactly *n* bytes. Raise an :exc:`IncompleteReadError` if the end of
       the stream is reached before *n* can be read, the
@@ -157,6 +157,8 @@ StreamWriter
    wait for flow control.  It also adds a transport attribute which references
    the :class:`Transport` directly.
 
+   This class is :ref:`not thread safe <asyncio-multithreading>`.
+
    .. attribute:: transport
 
       Transport.
@@ -170,21 +172,26 @@ StreamWriter
 
       Close the transport: see :meth:`BaseTransport.close`.
 
-   .. method:: drain()
+   .. coroutinemethod:: drain()
 
-      Wait until the write buffer of the underlying transport is flushed.
+      Let the write buffer of the underlying transport a chance to be flushed.
 
-      This method has an unusual return value. The intended use is to write::
+      The intended use is to write::
 
           w.write(data)
           yield from w.drain()
 
-      When there's nothing to wait for, :meth:`drain()` returns ``()``, and the
-      yield-from continues immediately.  When the transport buffer is full (the
-      protocol is paused), :meth:`drain` creates and returns a
-      :class:`Future` and the yield-from will block until
-      that Future is completed, which will happen when the buffer is
-      (partially) drained and the protocol is resumed.
+      When the size of the transport buffer reaches the high-water limit (the
+      protocol is paused), block until the size of the buffer is drained down
+      to the low-water limit and the protocol is resumed. When there is nothing
+      to wait for, the yield-from continues immediately.
+
+      Yielding from :meth:`drain` gives the opportunity for the loop to
+      schedule the write operation and flush the buffer. It should especially
+      be used when a possibly large amount of data is written to the transport,
+      and the coroutine does not yield-from between calls to :meth:`write`.
+
+      This method is a :ref:`coroutine <coroutine>`.
 
    .. method:: get_extra_info(name, default=None)
 
@@ -241,8 +248,90 @@ IncompleteReadError
       Read bytes string before the end of stream was reached (:class:`bytes`).
 
 
-Example
-=======
+Stream examples
+===============
+
+.. _asyncio-tcp-echo-client-streams:
+
+TCP echo client using streams
+-----------------------------
+
+TCP echo client using the :func:`asyncio.open_connection` function::
+
+    import asyncio
+
+    @asyncio.coroutine
+    def tcp_echo_client(message, loop):
+        reader, writer = yield from asyncio.open_connection('127.0.0.1', 8888,
+                                                            loop=loop)
+
+        print('Send: %r' % message)
+        writer.write(message.encode())
+
+        data = yield from reader.read(100)
+        print('Received: %r' % data.decode())
+
+        print('Close the socket')
+        writer.close()
+
+    message = 'Hello World!'
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(tcp_echo_client(message, loop))
+    loop.close()
+
+.. seealso::
+
+   The :ref:`TCP echo client protocol <asyncio-tcp-echo-client-protocol>`
+   example uses the :meth:`BaseEventLoop.create_connection` method.
+
+
+.. _asyncio-tcp-echo-server-streams:
+
+TCP echo server using streams
+-----------------------------
+
+TCP echo server using the :func:`asyncio.start_server` function::
+
+    import asyncio
+
+    @asyncio.coroutine
+    def handle_echo(reader, writer):
+        data = yield from reader.read(100)
+        message = data.decode()
+        addr = writer.get_extra_info('peername')
+        print("Received %r from %r" % (message, addr))
+
+        print("Send: %r" % message)
+        writer.write(data)
+        yield from writer.drain()
+
+        print("Close the client socket")
+        writer.close()
+
+    loop = asyncio.get_event_loop()
+    coro = asyncio.start_server(handle_echo, '127.0.0.1', 8888, loop=loop)
+    server = loop.run_until_complete(coro)
+
+    # Serve requests until CTRL+c is pressed
+    print('Serving on {}'.format(server.sockets[0].getsockname()))
+    try:
+        loop.run_forever()
+    except KeyboardInterrupt:
+        pass
+
+    # Close the server
+    server.close()
+    loop.run_until_complete(server.wait_closed())
+    loop.close()
+
+.. seealso::
+
+   The :ref:`TCP echo server protocol <asyncio-tcp-echo-server-protocol>`
+   example uses the :meth:`BaseEventLoop.create_server` method.
+
+
+Get HTTP headers
+----------------
 
 Simple example querying HTTP headers of the URL passed on the command line::
 
@@ -253,10 +342,14 @@ Simple example querying HTTP headers of the URL passed on the command line::
     @asyncio.coroutine
     def print_http_headers(url):
         url = urllib.parse.urlsplit(url)
-        reader, writer = yield from asyncio.open_connection(url.hostname, 80)
-        query = ('HEAD {url.path} HTTP/1.0\r\n'
-                 'Host: {url.hostname}\r\n'
-                 '\r\n').format(url=url)
+        if url.scheme == 'https':
+            connect = asyncio.open_connection(url.hostname, 443, ssl=True)
+        else:
+            connect = asyncio.open_connection(url.hostname, 80)
+        reader, writer = yield from connect
+        query = ('HEAD {path} HTTP/1.0\r\n'
+                 'Host: {hostname}\r\n'
+                 '\r\n').format(path=url.path or '/', hostname=url.hostname)
         writer.write(query.encode('latin-1'))
         while True:
             line = yield from reader.readline()
@@ -265,6 +358,9 @@ Simple example querying HTTP headers of the URL passed on the command line::
             line = line.decode('latin1').rstrip()
             if line:
                 print('HTTP header> %s' % line)
+
+        # Ignore the body, close the socket
+        writer.close()
 
     url = sys.argv[1]
     loop = asyncio.get_event_loop()
@@ -275,4 +371,58 @@ Simple example querying HTTP headers of the URL passed on the command line::
 Usage::
 
     python example.py http://example.com/path/page.html
+
+or with HTTPS::
+
+    python example.py https://example.com/path/page.html
+
+.. _asyncio-register-socket-streams:
+
+Register an open socket to wait for data using streams
+------------------------------------------------------
+
+Coroutine waiting until a socket receives data using the
+:func:`open_connection` function::
+
+    import asyncio
+    try:
+        from socket import socketpair
+    except ImportError:
+        from asyncio.windows_utils import socketpair
+
+    @asyncio.coroutine
+    def wait_for_data(loop):
+        # Create a pair of connected sockets
+        rsock, wsock = socketpair()
+
+        # Register the open socket to wait for data
+        reader, writer = yield from asyncio.open_connection(sock=rsock, loop=loop)
+
+        # Simulate the reception of data from the network
+        loop.call_soon(wsock.send, 'abc'.encode())
+
+        # Wait for data
+        data = yield from reader.read(100)
+
+        # Got data, we are done: close the socket
+        print("Received:", data.decode())
+        writer.close()
+
+        # Close the second socket
+        wsock.close()
+
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(wait_for_data(loop))
+    loop.close()
+
+.. seealso::
+
+   The :ref:`register an open socket to wait for data using a protocol
+   <asyncio-register-socket>` example uses a low-level protocol created by the
+   :meth:`BaseEventLoop.create_connection` method.
+
+   The :ref:`watch a file descriptor for read events
+   <asyncio-watch-read-event>` example uses the low-level
+   :meth:`BaseEventLoop.add_reader` method to register the file descriptor of a
+   socket.
 

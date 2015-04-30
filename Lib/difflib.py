@@ -28,9 +28,9 @@ Class HtmlDiff:
 
 __all__ = ['get_close_matches', 'ndiff', 'restore', 'SequenceMatcher',
            'Differ','IS_CHARACTER_JUNK', 'IS_LINE_JUNK', 'context_diff',
-           'unified_diff', 'HtmlDiff', 'Match']
+           'unified_diff', 'diff_bytes', 'HtmlDiff', 'Match']
 
-import heapq
+from heapq import nlargest as _nlargest
 from collections import namedtuple as _namedtuple
 
 Match = _namedtuple('Match', 'a b size')
@@ -511,8 +511,8 @@ class SequenceMatcher:
             non_adjacent.append((i1, j1, k1))
 
         non_adjacent.append( (la, lb, 0) )
-        self.matching_blocks = non_adjacent
-        return map(Match._make, self.matching_blocks)
+        self.matching_blocks = list(map(Match._make, non_adjacent))
+        return self.matching_blocks
 
     def get_opcodes(self):
         """Return list of 5-tuples describing how to turn a into b.
@@ -729,7 +729,7 @@ def get_close_matches(word, possibilities, n=3, cutoff=0.6):
             result.append((s.ratio(), x))
 
     # Move the best scorers to head of list
-    result = heapq.nlargest(n, result)
+    result = _nlargest(n, result)
     # Strip scores for the best n matches
     return [x for score, x in result]
 
@@ -1174,6 +1174,7 @@ def unified_diff(a, b, fromfile='', tofile='', fromfiledate='',
      four
     """
 
+    _check_types(a, b, fromfile, tofile, fromfiledate, tofiledate, lineterm)
     started = False
     for group in SequenceMatcher(None,a,b).get_grouped_opcodes(n):
         if not started:
@@ -1261,6 +1262,7 @@ def context_diff(a, b, fromfile='', tofile='',
       four
     """
 
+    _check_types(a, b, fromfile, tofile, fromfiledate, tofiledate, lineterm)
     prefix = dict(insert='+ ', delete='- ', replace='! ', equal='  ')
     started = False
     for group in SequenceMatcher(None,a,b).get_grouped_opcodes(n):
@@ -1291,6 +1293,53 @@ def context_diff(a, b, fromfile='', tofile='',
                 if tag != 'delete':
                     for line in b[j1:j2]:
                         yield prefix[tag] + line
+
+def _check_types(a, b, *args):
+    # Checking types is weird, but the alternative is garbled output when
+    # someone passes mixed bytes and str to {unified,context}_diff(). E.g.
+    # without this check, passing filenames as bytes results in output like
+    #   --- b'oldfile.txt'
+    #   +++ b'newfile.txt'
+    # because of how str.format() incorporates bytes objects.
+    if a and not isinstance(a[0], str):
+        raise TypeError('lines to compare must be str, not %s (%r)' %
+                        (type(a[0]).__name__, a[0]))
+    if b and not isinstance(b[0], str):
+        raise TypeError('lines to compare must be str, not %s (%r)' %
+                        (type(b[0]).__name__, b[0]))
+    for arg in args:
+        if not isinstance(arg, str):
+            raise TypeError('all arguments must be str, not: %r' % (arg,))
+
+def diff_bytes(dfunc, a, b, fromfile=b'', tofile=b'',
+               fromfiledate=b'', tofiledate=b'', n=3, lineterm=b'\n'):
+    r"""
+    Compare `a` and `b`, two sequences of lines represented as bytes rather
+    than str. This is a wrapper for `dfunc`, which is typically either
+    unified_diff() or context_diff(). Inputs are losslessly converted to
+    strings so that `dfunc` only has to worry about strings, and encoded
+    back to bytes on return. This is necessary to compare files with
+    unknown or inconsistent encoding. All other inputs (except `n`) must be
+    bytes rather than str.
+    """
+    def decode(s):
+        try:
+            return s.decode('ascii', 'surrogateescape')
+        except AttributeError as err:
+            msg = ('all arguments must be bytes, not %s (%r)' %
+                   (type(s).__name__, s))
+            raise TypeError(msg) from err
+    a = list(map(decode, a))
+    b = list(map(decode, b))
+    fromfile = decode(fromfile)
+    tofile = decode(tofile)
+    fromfiledate = decode(fromfiledate)
+    tofiledate = decode(tofiledate)
+    lineterm = decode(lineterm)
+
+    lines = dfunc(a, b, fromfile, tofile, fromfiledate, tofiledate, n, lineterm)
+    for line in lines:
+        yield line.encode('ascii', 'surrogateescape')
 
 def ndiff(a, b, linejunk=None, charjunk=IS_CHARACTER_JUNK):
     r"""
@@ -1410,7 +1459,7 @@ def _mdiff(fromlines, tolines, context=None, linejunk=None,
             change_re.sub(record_sub_info,markers)
             # process each tuple inserting our special marks that won't be
             # noticed by an xml/html escaper.
-            for key,(begin,end) in sub_info[::-1]:
+            for key,(begin,end) in reversed(sub_info):
                 text = text[0:begin]+'\0'+key+text[begin:end]+'\1'+text[end:]
             text = text[2:]
         # Handle case of add/delete entire line
@@ -1448,10 +1497,7 @@ def _mdiff(fromlines, tolines, context=None, linejunk=None,
             # are a concatenation of the first character of each of the 4 lines
             # so we can do some very readable comparisons.
             while len(lines) < 4:
-                try:
-                    lines.append(next(diff_lines_iterator))
-                except StopIteration:
-                    lines.append('X')
+                lines.append(next(diff_lines_iterator, 'X'))
             s = ''.join([line[0] for line in lines])
             if s.startswith('X'):
                 # When no more lines, pump out any remaining blank lines so the
@@ -1514,7 +1560,7 @@ def _mdiff(fromlines, tolines, context=None, linejunk=None,
                 num_blanks_to_yield -= 1
                 yield ('','\n'),None,True
             if s.startswith('X'):
-                raise StopIteration
+                return
             else:
                 yield from_line,to_line,True
 
@@ -1601,7 +1647,7 @@ _file_template = """
 
 <head>
     <meta http-equiv="Content-Type"
-          content="text/html; charset=ISO-8859-1" />
+          content="text/html; charset=%(charset)s" />
     <title></title>
     <style type="text/css">%(styles)s
     </style>
@@ -1688,8 +1734,8 @@ class HtmlDiff(object):
         self._linejunk = linejunk
         self._charjunk = charjunk
 
-    def make_file(self,fromlines,tolines,fromdesc='',todesc='',context=False,
-                  numlines=5):
+    def make_file(self, fromlines, tolines, fromdesc='', todesc='',
+                  context=False, numlines=5, *, charset='utf-8'):
         """Returns HTML file of side by side comparison with change highlights
 
         Arguments:
@@ -1704,13 +1750,16 @@ class HtmlDiff(object):
             When context is False, controls the number of lines to place
             the "next" link anchors before the next change (so click of
             "next" link jumps to just before the change).
+        charset -- charset of the HTML document
         """
 
-        return self._file_template % dict(
-            styles = self._styles,
-            legend = self._legend,
-            table = self.make_table(fromlines,tolines,fromdesc,todesc,
-                                    context=context,numlines=numlines))
+        return (self._file_template % dict(
+            styles=self._styles,
+            legend=self._legend,
+            table=self.make_table(fromlines, tolines, fromdesc, todesc,
+                                  context=context, numlines=numlines),
+            charset=charset
+        )).encode(charset, 'xmlcharrefreplace').decode(charset)
 
     def _tab_newline_replace(self,fromlines,tolines):
         """Returns from/to line lists with tabs expanded and newlines removed.

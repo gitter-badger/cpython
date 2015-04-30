@@ -189,30 +189,7 @@ type objects) *must* have the :attr:`ob_size` field.
 
 .. c:member:: printfunc PyTypeObject.tp_print
 
-   An optional pointer to the instance print function.
-
-   The print function is only called when the instance is printed to a *real* file;
-   when it is printed to a pseudo-file (like a :class:`io.StringIO` instance), the
-   instance's :c:member:`~PyTypeObject.tp_repr` or :c:member:`~PyTypeObject.tp_str` function is called to convert it to
-   a string.  These are also called when the type's :c:member:`~PyTypeObject.tp_print` field is
-   *NULL*.  A type should never implement :c:member:`~PyTypeObject.tp_print` in a way that produces
-   different output than :c:member:`~PyTypeObject.tp_repr` or :c:member:`~PyTypeObject.tp_str` would.
-
-   The print function is called with the same signature as :c:func:`PyObject_Print`:
-   ``int tp_print(PyObject *self, FILE *file, int flags)``.  The *self* argument is
-   the instance to be printed.  The *file* argument is the stdio file to which it
-   is to be printed.  The *flags* argument is composed of flag bits. The only flag
-   bit currently defined is :const:`Py_PRINT_RAW`. When the :const:`Py_PRINT_RAW`
-   flag bit is set, the instance should be printed the same way as :c:member:`~PyTypeObject.tp_str`
-   would format it; when the :const:`Py_PRINT_RAW` flag bit is clear, the instance
-   should be printed the same way as :c:member:`~PyTypeObject.tp_repr` would format it. It should
-   return ``-1`` and set an exception condition when an error occurs.
-
-   It is possible that the :c:member:`~PyTypeObject.tp_print` field will be deprecated. In any case,
-   it is recommended not to define :c:member:`~PyTypeObject.tp_print`, but instead to rely on
-   :c:member:`~PyTypeObject.tp_repr` and :c:member:`~PyTypeObject.tp_str` for printing.
-
-   This field is inherited by subtypes.
+   Reserved slot, formerly used for print formatting in Python 2.x.
 
 
 .. c:member:: getattrfunc PyTypeObject.tp_getattr
@@ -464,6 +441,24 @@ type objects) *must* have the :attr:`ob_size` field.
       :const:`Py_TPFLAGS_HAVE_VERSION_TAG`.
 
 
+   .. data:: Py_TPFLAGS_LONG_SUBCLASS
+   .. data:: Py_TPFLAGS_LIST_SUBCLASS
+   .. data:: Py_TPFLAGS_TUPLE_SUBCLASS
+   .. data:: Py_TPFLAGS_BYTES_SUBCLASS
+   .. data:: Py_TPFLAGS_UNICODE_SUBCLASS
+   .. data:: Py_TPFLAGS_DICT_SUBCLASS
+   .. data:: Py_TPFLAGS_BASE_EXC_SUBCLASS
+   .. data:: Py_TPFLAGS_TYPE_SUBCLASS
+
+      These flags are used by functions such as
+      :c:func:`PyLong_Check` to quickly determine if a type is a subclass
+      of a built-in type; such specific checks are faster than a generic
+      check, like :c:func:`PyObject_IsInstance`. Custom types that inherit
+      from built-ins should have their :c:member:`~PyTypeObject.tp_flags`
+      set appropriately, or the code that interacts with such types
+      will behave differently depending on what kind of check is used.
+
+
    .. data:: Py_TPFLAGS_HAVE_FINALIZE
 
       This bit is set when the :c:member:`~PyTypeObject.tp_finalize` slot is present in the
@@ -579,7 +574,9 @@ type objects) *must* have the :attr:`ob_size` field.
 .. c:member:: richcmpfunc PyTypeObject.tp_richcompare
 
    An optional pointer to the rich comparison function, whose signature is
-   ``PyObject *tp_richcompare(PyObject *a, PyObject *b, int op)``.
+   ``PyObject *tp_richcompare(PyObject *a, PyObject *b, int op)``. The first
+   parameter is guaranteed to be an instance of the type that is defined
+   by :c:type:`PyTypeObject`.
 
    The function should return the result of the comparison (usually ``Py_True``
    or ``Py_False``).  If the comparison is undefined, it must return
@@ -1121,6 +1118,9 @@ Number Object Structures
             binaryfunc nb_inplace_true_divide;
 
             unaryfunc nb_index;
+
+            binaryfunc nb_matrix_multiply;
+            binaryfunc nb_inplace_matrix_multiply;
        } PyNumberMethods;
 
    .. note::
@@ -1199,7 +1199,8 @@ Sequence Object Structures
 
    This function is used by :c:func:`PySequence_Repeat` and has the same
    signature.  It is also used by the ``*`` operator, after trying numeric
-   multiplication via the :c:member:`~PyTypeObject.tp_as_number.nb_mul` slot.
+   multiplication via the :c:member:`~PyTypeObject.tp_as_number.nb_multiply`
+   slot.
 
 .. c:member:: ssizeargfunc PySequenceMethods.sq_item
 

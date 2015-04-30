@@ -22,7 +22,10 @@ class PointersTestCase(unittest.TestCase):
     def test_pass_pointers(self):
         dll = CDLL(_ctypes_test.__file__)
         func = dll._testfunc_p_p
-        func.restype = c_long
+        if sizeof(c_longlong) == sizeof(c_void_p):
+            func.restype = c_longlong
+        else:
+            func.restype = c_long
 
         i = c_int(12345678)
 ##        func.argtypes = (POINTER(c_int),)
@@ -187,6 +190,14 @@ class PointersTestCase(unittest.TestCase):
         if sys.platform == "win32":
             mth = WINFUNCTYPE(None)(42, "name", (), None)
             self.assertEqual(bool(mth), True)
+
+    def test_pointer_type_name(self):
+        LargeNamedType = type('T' * 2 ** 25, (Structure,), {})
+        self.assertTrue(POINTER(LargeNamedType))
+
+    def test_pointer_type_str_name(self):
+        large_string = 'T' * 2 ** 25
+        self.assertTrue(POINTER(large_string))
 
 if __name__ == '__main__':
     unittest.main()

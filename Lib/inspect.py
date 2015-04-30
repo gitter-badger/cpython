@@ -32,6 +32,7 @@ __author__ = ('Ka-Ping Yee <ping@lfw.org>',
               'Yury Selivanov <yselivanov@sprymix.com>')
 
 import ast
+import dis
 import enum
 import importlib.machinery
 import itertools
@@ -49,18 +50,10 @@ from operator import attrgetter
 from collections import namedtuple, OrderedDict
 
 # Create constants for the compiler flags in Include/code.h
-# We try to get them from dis to avoid duplication, but fall
-# back to hardcoding so the dependency is optional
-try:
-    from dis import COMPILER_FLAG_NAMES as _flag_names
-except ImportError:
-    CO_OPTIMIZED, CO_NEWLOCALS = 0x1, 0x2
-    CO_VARARGS, CO_VARKEYWORDS = 0x4, 0x8
-    CO_NESTED, CO_GENERATOR, CO_NOFREE = 0x10, 0x20, 0x40
-else:
-    mod_dict = globals()
-    for k, v in _flag_names.items():
-        mod_dict["CO_" + v] = k
+# We try to get them from dis to avoid duplication
+mod_dict = globals()
+for k, v in dis.COMPILER_FLAG_NAMES.items():
+    mod_dict["CO_" + v] = k
 
 # See Include/object.h
 TPFLAGS_IS_ABSTRACT = 1 << 20
@@ -468,6 +461,74 @@ def indentsize(line):
     expline = line.expandtabs()
     return len(expline) - len(expline.lstrip())
 
+def _findclass(func):
+    cls = sys.modules.get(func.__module__)
+    if cls is None:
+        return None
+    for name in func.__qualname__.split('.')[:-1]:
+        cls = getattr(cls, name)
+    if not isclass(cls):
+        return None
+    return cls
+
+def _finddoc(obj):
+    if isclass(obj):
+        for base in obj.__mro__:
+            if base is not object:
+                try:
+                    doc = base.__doc__
+                except AttributeError:
+                    continue
+                if doc is not None:
+                    return doc
+        return None
+
+    if ismethod(obj):
+        name = obj.__func__.__name__
+        self = obj.__self__
+        if (isclass(self) and
+            getattr(getattr(self, name, None), '__func__') is obj.__func__):
+            # classmethod
+            cls = self
+        else:
+            cls = self.__class__
+    elif isfunction(obj):
+        name = obj.__name__
+        cls = _findclass(obj)
+        if cls is None or getattr(cls, name) is not obj:
+            return None
+    elif isbuiltin(obj):
+        name = obj.__name__
+        self = obj.__self__
+        if (isclass(self) and
+            self.__qualname__ + '.' + name == obj.__qualname__):
+            # classmethod
+            cls = self
+        else:
+            cls = self.__class__
+    elif ismethoddescriptor(obj) or isdatadescriptor(obj):
+        name = obj.__name__
+        cls = obj.__objclass__
+        if getattr(cls, name) is not obj:
+            return None
+    elif isinstance(obj, property):
+        func = f.fget
+        name = func.__name__
+        cls = _findclass(func)
+        if cls is None or getattr(cls, name) is not obj:
+            return None
+    else:
+        return None
+
+    for base in cls.__mro__:
+        try:
+            doc = getattr(base, name).__doc__
+        except AttributeError:
+            continue
+        if doc is not None:
+            return doc
+    return None
+
 def getdoc(object):
     """Get the documentation string for an object.
 
@@ -478,6 +539,11 @@ def getdoc(object):
         doc = object.__doc__
     except AttributeError:
         return None
+    if doc is None:
+        try:
+            doc = _finddoc(object)
+        except (AttributeError, TypeError):
+            return None
     if not isinstance(doc, str):
         return None
     return cleandoc(doc)
@@ -653,11 +719,17 @@ def findsource(object):
     in the file and the line number indexes a line in that list.  An OSError
     is raised if the source code cannot be retrieved."""
 
-    file = getfile(object)
-    sourcefile = getsourcefile(object)
-    if not sourcefile and file[:1] + file[-1:] != '<>':
-        raise OSError('source code not available')
-    file = sourcefile if sourcefile else file
+    file = getsourcefile(object)
+    if file:
+        # Invalidate cache if needed.
+        linecache.checkcache(file)
+    else:
+        file = getfile(object)
+        # Allow filenames in form of "<something>" to pass through.
+        # `doctest` monkeypatches `linecache` module to enable
+        # inspection, so let `linecache.getlines` to be called.
+        if not (file.startswith('<') and file.endswith('>')):
+            raise OSError('source code not available')
 
     module = getmodule(object, file)
     if module:
@@ -809,6 +881,14 @@ def getblock(lines):
         pass
     return lines[:blockfinder.last]
 
+def _line_number_helper(code_obj, lines, lnum):
+    """Return a list of source lines and starting line number for a code object.
+
+    The arguments must be a code object with lines and lnum from findsource.
+    """
+    _, end_line = list(dis.findlinestarts(code_obj))[-1]
+    return lines[lnum:end_line], lnum + 1
+
 def getsourcelines(object):
     """Return a list of source lines and starting line number for an object.
 
@@ -817,10 +897,19 @@ def getsourcelines(object):
     corresponding to the object and the line number indicates where in the
     original source file the first line of code was found.  An OSError is
     raised if the source code cannot be retrieved."""
+    object = unwrap(object)
     lines, lnum = findsource(object)
 
-    if ismodule(object): return lines, 0
-    else: return getblock(lines[lnum:]), lnum + 1
+    if ismodule(object):
+        return lines, 0
+    elif iscode(object):
+        return _line_number_helper(object, lines, lnum)
+    elif isfunction(object):
+        return _line_number_helper(object.__code__, lines, lnum)
+    elif ismethod(object):
+        return _line_number_helper(object.__func__.__code__, lines, lnum)
+    else:
+        return getblock(lines[lnum:]), lnum + 1
 
 def getsource(object):
     """Return the text of the source code for an object.
@@ -914,10 +1003,9 @@ ArgSpec = namedtuple('ArgSpec', 'args varargs keywords defaults')
 def getargspec(func):
     """Get the names and default values of a function's arguments.
 
-    A tuple of four things is returned: (args, varargs, varkw, defaults).
-    'args' is a list of the argument names.
-    'args' will include keyword-only argument names.
-    'varargs' and 'varkw' are the names of the * and ** arguments or None.
+    A tuple of four things is returned: (args, varargs, keywords, defaults).
+    'args' is a list of the argument names, including keyword-only argument names.
+    'varargs' and 'keywords' are the names of the * and ** arguments or None.
     'defaults' is an n-tuple of the default values of the last n arguments.
 
     Use the getfullargspec() API for Python 3 code, as annotations
@@ -1039,8 +1127,8 @@ def getargvalues(frame):
 def formatannotation(annotation, base_module=None):
     if isinstance(annotation, type):
         if annotation.__module__ in ('builtins', base_module):
-            return annotation.__name__
-        return annotation.__module__+'.'+annotation.__name__
+            return annotation.__qualname__
+        return annotation.__module__+'.'+annotation.__qualname__
     return repr(annotation)
 
 def formatannotationrelativeto(object):
@@ -1313,6 +1401,8 @@ def getlineno(frame):
     # FrameType.f_lineno is now a descriptor that grovels co_lnotab
     return frame.f_lineno
 
+FrameInfo = namedtuple('FrameInfo', ('frame',) + Traceback._fields)
+
 def getouterframes(frame, context=1):
     """Get a list of records for a frame and all higher (calling) frames.
 
@@ -1320,7 +1410,8 @@ def getouterframes(frame, context=1):
     name, a list of lines of context, and index within the context."""
     framelist = []
     while frame:
-        framelist.append((frame,) + getframeinfo(frame, context))
+        frameinfo = (frame,) + getframeinfo(frame, context)
+        framelist.append(FrameInfo(*frameinfo))
         frame = frame.f_back
     return framelist
 
@@ -1331,7 +1422,8 @@ def getinnerframes(tb, context=1):
     name, a list of lines of context, and index within the context."""
     framelist = []
     while tb:
-        framelist.append((tb.tb_frame,) + getframeinfo(tb, context))
+        frameinfo = (tb.tb_frame,) + getframeinfo(tb, context)
+        framelist.append(FrameInfo(*frameinfo))
         tb = tb.tb_next
     return framelist
 
@@ -1518,7 +1610,8 @@ def _signature_get_partial(wrapped_sig, partial, extra_args=()):
     on it.
     """
 
-    new_params = OrderedDict(wrapped_sig.parameters.items())
+    old_params = wrapped_sig.parameters
+    new_params = OrderedDict(old_params.items())
 
     partial_args = partial.args or ()
     partial_keywords = partial.keywords or {}
@@ -1532,32 +1625,57 @@ def _signature_get_partial(wrapped_sig, partial, extra_args=()):
         msg = 'partial object {!r} has incorrect arguments'.format(partial)
         raise ValueError(msg) from ex
 
-    for arg_name, arg_value in ba.arguments.items():
-        param = new_params[arg_name]
-        if arg_name in partial_keywords:
-            # We set a new default value, because the following code
-            # is correct:
-            #
-            #   >>> def foo(a): print(a)
-            #   >>> print(partial(partial(foo, a=10), a=20)())
-            #   20
-            #   >>> print(partial(partial(foo, a=10), a=20)(a=30))
-            #   30
-            #
-            # So, with 'partial' objects, passing a keyword argument is
-            # like setting a new default value for the corresponding
-            # parameter
-            #
-            # We also mark this parameter with '_partial_kwarg'
-            # flag.  Later, in '_bind', the 'default' value of this
-            # parameter will be added to 'kwargs', to simulate
-            # the 'functools.partial' real call.
-            new_params[arg_name] = param.replace(default=arg_value,
-                                                 _partial_kwarg=True)
 
-        elif (param.kind not in (_VAR_KEYWORD, _VAR_POSITIONAL) and
-                        not param._partial_kwarg):
-            new_params.pop(arg_name)
+    transform_to_kwonly = False
+    for param_name, param in old_params.items():
+        try:
+            arg_value = ba.arguments[param_name]
+        except KeyError:
+            pass
+        else:
+            if param.kind is _POSITIONAL_ONLY:
+                # If positional-only parameter is bound by partial,
+                # it effectively disappears from the signature
+                new_params.pop(param_name)
+                continue
+
+            if param.kind is _POSITIONAL_OR_KEYWORD:
+                if param_name in partial_keywords:
+                    # This means that this parameter, and all parameters
+                    # after it should be keyword-only (and var-positional
+                    # should be removed). Here's why. Consider the following
+                    # function:
+                    #     foo(a, b, *args, c):
+                    #         pass
+                    #
+                    # "partial(foo, a='spam')" will have the following
+                    # signature: "(*, a='spam', b, c)". Because attempting
+                    # to call that partial with "(10, 20)" arguments will
+                    # raise a TypeError, saying that "a" argument received
+                    # multiple values.
+                    transform_to_kwonly = True
+                    # Set the new default value
+                    new_params[param_name] = param.replace(default=arg_value)
+                else:
+                    # was passed as a positional argument
+                    new_params.pop(param.name)
+                    continue
+
+            if param.kind is _KEYWORD_ONLY:
+                # Set the new default value
+                new_params[param_name] = param.replace(default=arg_value)
+
+        if transform_to_kwonly:
+            assert param.kind is not _POSITIONAL_ONLY
+
+            if param.kind is _POSITIONAL_OR_KEYWORD:
+                new_param = new_params[param_name].replace(kind=_KEYWORD_ONLY)
+                new_params[param_name] = new_param
+                new_params.move_to_end(param_name)
+            elif param.kind in (_KEYWORD_ONLY, _VAR_KEYWORD):
+                new_params.move_to_end(param_name)
+            elif param.kind is _VAR_POSITIONAL:
+                new_params.pop(param.name)
 
     return wrapped_sig.replace(parameters=new_params.values())
 
@@ -1913,6 +2031,10 @@ def _signature_from_callable(obj, *,
         pass
     else:
         if sig is not None:
+            if not isinstance(sig, Signature):
+                raise TypeError(
+                    'unexpected object {!r} in __signature__ '
+                    'attribute'.format(sig))
             return sig
 
     try:
@@ -2103,7 +2225,7 @@ class Parameter:
         `Parameter.KEYWORD_ONLY`, `Parameter.VAR_KEYWORD`.
     """
 
-    __slots__ = ('_name', '_kind', '_default', '_annotation', '_partial_kwarg')
+    __slots__ = ('_name', '_kind', '_default', '_annotation')
 
     POSITIONAL_ONLY         = _POSITIONAL_ONLY
     POSITIONAL_OR_KEYWORD   = _POSITIONAL_OR_KEYWORD
@@ -2113,8 +2235,7 @@ class Parameter:
 
     empty = _empty
 
-    def __init__(self, name, kind, *, default=_empty, annotation=_empty,
-                 _partial_kwarg=False):
+    def __init__(self, name, kind, *, default=_empty, annotation=_empty):
 
         if kind not in (_POSITIONAL_ONLY, _POSITIONAL_OR_KEYWORD,
                         _VAR_POSITIONAL, _KEYWORD_ONLY, _VAR_KEYWORD):
@@ -2139,17 +2260,13 @@ class Parameter:
 
         self._name = name
 
-        self._partial_kwarg = _partial_kwarg
-
     def __reduce__(self):
         return (type(self),
                 (self._name, self._kind),
-                {'_partial_kwarg': self._partial_kwarg,
-                 '_default': self._default,
+                {'_default': self._default,
                  '_annotation': self._annotation})
 
     def __setstate__(self, state):
-        self._partial_kwarg = state['_partial_kwarg']
         self._default = state['_default']
         self._annotation = state['_annotation']
 
@@ -2169,8 +2286,8 @@ class Parameter:
     def kind(self):
         return self._kind
 
-    def replace(self, *, name=_void, kind=_void, annotation=_void,
-                default=_void, _partial_kwarg=_void):
+    def replace(self, *, name=_void, kind=_void,
+                annotation=_void, default=_void):
         """Creates a customized copy of the Parameter."""
 
         if name is _void:
@@ -2185,11 +2302,7 @@ class Parameter:
         if default is _void:
             default = self._default
 
-        if _partial_kwarg is _void:
-            _partial_kwarg = self._partial_kwarg
-
-        return type(self)(name, kind, default=default, annotation=annotation,
-                          _partial_kwarg=_partial_kwarg)
+        return type(self)(name, kind, default=default, annotation=annotation)
 
     def __str__(self):
         kind = self.kind
@@ -2214,26 +2327,15 @@ class Parameter:
         return '<{} at {:#x} "{}">'.format(self.__class__.__name__,
                                            id(self), self)
 
+    def __hash__(self):
+        return hash((self.name, self.kind, self.annotation, self.default))
+
     def __eq__(self, other):
-        # NB: We deliberately do not compare '_partial_kwarg' attributes
-        # here. Imagine we have a following situation:
-        #
-        #    def foo(a, b=1): pass
-        #    def bar(a, b): pass
-        #    bar2 = functools.partial(bar, b=1)
-        #
-        # For the above scenario, signatures for `foo` and `bar2` should
-        # be equal.  '_partial_kwarg' attribute is an internal flag, to
-        # distinguish between keyword parameters with defaults and
-        # keyword parameters which got their defaults from functools.partial
         return (issubclass(other.__class__, Parameter) and
                 self._name == other._name and
                 self._kind == other._kind and
                 self._default == other._default and
                 self._annotation == other._annotation)
-
-    def __ne__(self, other):
-        return not self.__eq__(other)
 
 
 class BoundArguments:
@@ -2265,12 +2367,7 @@ class BoundArguments:
     def args(self):
         args = []
         for param_name, param in self._signature.parameters.items():
-            if (param.kind in (_VAR_KEYWORD, _KEYWORD_ONLY) or
-                                                    param._partial_kwarg):
-                # Keyword arguments mapped by 'functools.partial'
-                # (Parameter._partial_kwarg is True) are mapped
-                # in 'BoundArguments.kwargs', along with VAR_KEYWORD &
-                # KEYWORD_ONLY
+            if param.kind in (_VAR_KEYWORD, _KEYWORD_ONLY):
                 break
 
             try:
@@ -2295,8 +2392,7 @@ class BoundArguments:
         kwargs_started = False
         for param_name, param in self._signature.parameters.items():
             if not kwargs_started:
-                if (param.kind in (_VAR_KEYWORD, _KEYWORD_ONLY) or
-                                                param._partial_kwarg):
+                if param.kind in (_VAR_KEYWORD, _KEYWORD_ONLY):
                     kwargs_started = True
                 else:
                     if param_name not in self.arguments:
@@ -2324,9 +2420,6 @@ class BoundArguments:
         return (issubclass(other.__class__, BoundArguments) and
                 self.signature == other.signature and
                 self.arguments == other.arguments)
-
-    def __ne__(self, other):
-        return not self.__eq__(other)
 
 
 class Signature:
@@ -2378,18 +2471,14 @@ class Signature:
                     name = param.name
 
                     if kind < top_kind:
-                        msg = 'wrong parameter order: {} before {}'
+                        msg = 'wrong parameter order: {!r} before {!r}'
                         msg = msg.format(top_kind, kind)
                         raise ValueError(msg)
                     elif kind > top_kind:
                         kind_defaults = False
                         top_kind = kind
 
-                    if (kind in (_POSITIONAL_ONLY, _POSITIONAL_OR_KEYWORD) and
-                                                     not param._partial_kwarg):
-                        # If we have a positional-only or positional-or-keyword
-                        # parameter, that does not have its default value set
-                        # by 'functools.partial' or other "partial" signature:
+                    if kind in (_POSITIONAL_ONLY, _POSITIONAL_OR_KEYWORD):
                         if param.default is _empty:
                             if kind_defaults:
                                 # No default for this parameter, but the
@@ -2528,38 +2617,23 @@ class Signature:
         return type(self)(parameters,
                           return_annotation=return_annotation)
 
+    def _hash_basis(self):
+        params = tuple(param for param in self.parameters.values()
+                             if param.kind != _KEYWORD_ONLY)
+
+        kwo_params = {param.name: param for param in self.parameters.values()
+                                        if param.kind == _KEYWORD_ONLY}
+
+        return params, kwo_params, self.return_annotation
+
+    def __hash__(self):
+        params, kwo_params, return_annotation = self._hash_basis()
+        kwo_params = frozenset(kwo_params.values())
+        return hash((params, kwo_params, return_annotation))
+
     def __eq__(self, other):
-        if (not issubclass(type(other), Signature) or
-                    self.return_annotation != other.return_annotation or
-                    len(self.parameters) != len(other.parameters)):
-            return False
-
-        other_positions = {param: idx
-                           for idx, param in enumerate(other.parameters.keys())}
-
-        for idx, (param_name, param) in enumerate(self.parameters.items()):
-            if param.kind == _KEYWORD_ONLY:
-                try:
-                    other_param = other.parameters[param_name]
-                except KeyError:
-                    return False
-                else:
-                    if param != other_param:
-                        return False
-            else:
-                try:
-                    other_idx = other_positions[param_name]
-                except KeyError:
-                    return False
-                else:
-                    if (idx != other_idx or
-                                    param != other.parameters[param_name]):
-                        return False
-
-        return True
-
-    def __ne__(self, other):
-        return not self.__eq__(other)
+        return (isinstance(other, Signature) and
+                self._hash_basis() == other._hash_basis())
 
     def _bind(self, args, kwargs, *, partial=False):
         """Private method. Don't use directly."""
@@ -2569,15 +2643,6 @@ class Signature:
         parameters = iter(self.parameters.values())
         parameters_ex = ()
         arg_vals = iter(args)
-
-        if partial:
-            # Support for binding arguments to 'functools.partial' objects.
-            # See 'functools.partial' case in 'signature()' implementation
-            # for details.
-            for param_name, param in self.parameters.items():
-                if (param._partial_kwarg and param_name not in kwargs):
-                    # Simulating 'functools.partial' behavior
-                    kwargs[param_name] = param.default
 
         while True:
             # Let's iterate through the positional arguments and corresponding

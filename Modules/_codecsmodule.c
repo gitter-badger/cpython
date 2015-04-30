@@ -42,15 +42,22 @@ Copyright (c) Corporation for National Research Initiatives.
 #include <windows.h>
 #endif
 
+/*[clinic input]
+module _codecs
+[clinic start generated code]*/
+/*[clinic end generated code: output=da39a3ee5e6b4b0d input=e1390e3da3cb9deb]*/
+
+#include "clinic/_codecsmodule.c.h"
+
 /* --- Registry ----------------------------------------------------------- */
 
 PyDoc_STRVAR(register__doc__,
 "register(search_function)\n\
 \n\
 Register a codec search function. Search functions are expected to take\n\
-one argument, the encoding name in all lower case letters, and return\n\
-a tuple of functions (encoder, decoder, stream_reader, stream_writer)\n\
-(or a CodecInfo object).");
+one argument, the encoding name in all lower case letters, and either\n\
+return None, or a tuple of functions (encoder, decoder, stream_reader,\n\
+stream_writer) (or a CodecInfo object).");
 
 static
 PyObject *codec_register(PyObject *self, PyObject *search_function)
@@ -89,13 +96,15 @@ a ValueError. Other possible values are 'ignore', 'replace' and\n\
 codecs.register_error that can handle ValueErrors.");
 
 static PyObject *
-codec_encode(PyObject *self, PyObject *args)
+codec_encode(PyObject *self, PyObject *args, PyObject *kwargs)
 {
+    static char *kwlist[] = {"obj", "encoding", "errors", NULL};
     const char *encoding = NULL;
     const char *errors = NULL;
     PyObject *v;
 
-    if (!PyArg_ParseTuple(args, "O|ss:encode", &v, &encoding, &errors))
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|ss:encode", kwlist,
+                                     &v, &encoding, &errors))
         return NULL;
 
     if (encoding == NULL)
@@ -116,13 +125,15 @@ as well as any other name registered with codecs.register_error that is\n\
 able to handle ValueErrors.");
 
 static PyObject *
-codec_decode(PyObject *self, PyObject *args)
+codec_decode(PyObject *self, PyObject *args, PyObject *kwargs)
 {
+    static char *kwlist[] = {"obj", "encoding", "errors", NULL};
     const char *encoding = NULL;
     const char *errors = NULL;
     PyObject *v;
 
-    if (!PyArg_ParseTuple(args, "O|ss:decode", &v, &encoding, &errors))
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|ss:decode", kwlist,
+                                     &v, &encoding, &errors))
         return NULL;
 
     if (encoding == NULL)
@@ -133,6 +144,25 @@ codec_decode(PyObject *self, PyObject *args)
 }
 
 /* --- Helpers ------------------------------------------------------------ */
+
+/*[clinic input]
+_codecs._forget_codec
+
+    encoding: str
+    /
+
+Purge the named codec from the internal codec lookup cache
+[clinic start generated code]*/
+
+static PyObject *
+_codecs__forget_codec_impl(PyModuleDef *module, const char *encoding)
+/*[clinic end generated code: output=b56a9b99d2d28080 input=18d5d92d0e386c38]*/
+{
+    if (_PyCodec_Forget(encoding) < 0) {
+        return NULL;
+    };
+    Py_RETURN_NONE;
+}
 
 static
 PyObject *codec_tuple(PyObject *unicode,
@@ -151,15 +181,18 @@ static PyObject *
 escape_decode(PyObject *self,
               PyObject *args)
 {
+    Py_buffer pbuf;
     const char *errors = NULL;
-    const char *data;
-    Py_ssize_t size;
+    PyObject *result;
 
-    if (!PyArg_ParseTuple(args, "s#|z:escape_decode",
-                          &data, &size, &errors))
+    if (!PyArg_ParseTuple(args, "s*|z:escape_decode",
+                          &pbuf, &errors))
         return NULL;
-    return codec_tuple(PyBytes_DecodeEscape(data, size, errors, 0, NULL),
-                       size);
+    result = codec_tuple(
+            PyBytes_DecodeEscape(pbuf.buf, pbuf.len, errors, 0, NULL),
+            pbuf.len);
+    PyBuffer_Release(&pbuf);
+    return result;
 }
 
 static PyObject *
@@ -231,8 +264,6 @@ unicode_internal_decode(PyObject *self,
 {
     PyObject *obj;
     const char *errors = NULL;
-    const char *data;
-    Py_ssize_t size;
 
     if (!PyArg_ParseTuple(args, "O|z:unicode_internal_decode",
                           &obj, &errors))
@@ -245,11 +276,16 @@ unicode_internal_decode(PyObject *self,
         return codec_tuple(obj, PyUnicode_GET_LENGTH(obj));
     }
     else {
-        if (PyObject_AsReadBuffer(obj, (const void **)&data, &size))
+        Py_buffer view;
+        PyObject *result;
+        if (PyObject_GetBuffer(obj, &view, PyBUF_SIMPLE) != 0)
             return NULL;
 
-        return codec_tuple(_PyUnicode_DecodeUnicodeInternal(data, size, errors),
-                           size);
+        result = codec_tuple(
+                _PyUnicode_DecodeUnicodeInternal(view.buf, view.len, errors),
+                view.len);
+        PyBuffer_Release(&view);
+        return result;
     }
 }
 
@@ -674,8 +710,6 @@ unicode_internal_encode(PyObject *self,
 {
     PyObject *obj;
     const char *errors = NULL;
-    const char *data;
-    Py_ssize_t len, size;
 
     if (PyErr_WarnEx(PyExc_DeprecationWarning,
                      "unicode_internal codec has been deprecated",
@@ -688,6 +722,7 @@ unicode_internal_encode(PyObject *self,
 
     if (PyUnicode_Check(obj)) {
         Py_UNICODE *u;
+        Py_ssize_t len, size;
 
         if (PyUnicode_READY(obj) < 0)
             return NULL;
@@ -695,16 +730,20 @@ unicode_internal_encode(PyObject *self,
         u = PyUnicode_AsUnicodeAndSize(obj, &len);
         if (u == NULL)
             return NULL;
-        if (len > PY_SSIZE_T_MAX / sizeof(Py_UNICODE))
+        if ((size_t)len > (size_t)PY_SSIZE_T_MAX / sizeof(Py_UNICODE))
             return PyErr_NoMemory();
         size = len * sizeof(Py_UNICODE);
         return codec_tuple(PyBytes_FromStringAndSize((const char*)u, size),
                            PyUnicode_GET_LENGTH(obj));
     }
     else {
-        if (PyObject_AsReadBuffer(obj, (const void **)&data, &size))
+        Py_buffer view;
+        PyObject *result;
+        if (PyObject_GetBuffer(obj, &view, PyBUF_SIMPLE) != 0)
             return NULL;
-        return codec_tuple(PyBytes_FromStringAndSize(data, size), size);
+        result = codec_tuple(PyBytes_FromStringAndSize(view.buf, view.len), view.len);
+        PyBuffer_Release(&view);
+        return result;
     }
 }
 
@@ -1120,9 +1159,9 @@ static PyMethodDef _codecs_functions[] = {
         register__doc__},
     {"lookup",                  codec_lookup,                   METH_VARARGS,
         lookup__doc__},
-    {"encode",                  codec_encode,                   METH_VARARGS,
+    {"encode",     (PyCFunction)codec_encode,     METH_VARARGS|METH_KEYWORDS,
         encode__doc__},
-    {"decode",                  codec_decode,                   METH_VARARGS,
+    {"decode",     (PyCFunction)codec_decode,     METH_VARARGS|METH_KEYWORDS,
         decode__doc__},
     {"escape_encode",           escape_encode,                  METH_VARARGS},
     {"escape_decode",           escape_decode,                  METH_VARARGS},
@@ -1168,6 +1207,7 @@ static PyMethodDef _codecs_functions[] = {
         register_error__doc__},
     {"lookup_error",            lookup_error,                   METH_VARARGS,
         lookup_error__doc__},
+    _CODECS__FORGET_CODEC_METHODDEF
     {NULL, NULL}                /* sentinel */
 };
 

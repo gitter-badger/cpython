@@ -7,6 +7,7 @@ __all__ = ['CancelledError', 'TimeoutError',
 
 import concurrent.futures._base
 import logging
+import reprlib
 import sys
 import traceback
 
@@ -19,7 +20,6 @@ _FINISHED = 'FINISHED'
 
 _PY34 = sys.version_info >= (3, 4)
 
-# TODO: Do we really want to depend on concurrent.futures internals?
 Error = concurrent.futures._base.Error
 CancelledError = concurrent.futures.CancelledError
 TimeoutError = concurrent.futures.TimeoutError
@@ -29,7 +29,6 @@ STACK_DEBUG = logging.DEBUG - 1  # heavy-duty debugging
 
 class InvalidStateError(Error):
     """The operation is not allowed in this state."""
-    # TODO: Show the future, its state, the method, and the required state.
 
 
 class _TracebackLogger:
@@ -60,7 +59,7 @@ class _TracebackLogger:
     the Future is collected, and the helper is present, the helper
     object is also collected, and its __del__() method will log the
     traceback.  When the Future's result() or exception() method is
-    called (and a helper object is present), it removes the the helper
+    called (and a helper object is present), it removes the helper
     object, after calling its clear() method to prevent it from
     logging.
 
@@ -82,10 +81,11 @@ class _TracebackLogger:
     in a discussion about closing files when they are collected.
     """
 
-    __slots__ = ['exc', 'tb', 'loop']
+    __slots__ = ('loop', 'source_traceback', 'exc', 'tb')
 
-    def __init__(self, exc, loop):
-        self.loop = loop
+    def __init__(self, future, exc):
+        self.loop = future._loop
+        self.source_traceback = future._source_traceback
         self.exc = exc
         self.tb = None
 
@@ -102,11 +102,13 @@ class _TracebackLogger:
 
     def __del__(self):
         if self.tb:
-            msg = 'Future/Task exception was never retrieved:\n{tb}'
-            context = {
-                'message': msg.format(tb=''.join(self.tb)),
-            }
-            self.loop.call_exception_handler(context)
+            msg = 'Future/Task exception was never retrieved\n'
+            if self.source_traceback:
+                src = ''.join(traceback.format_list(self.source_traceback))
+                msg += 'Future/Task created at (most recent call last):\n'
+                msg += '%s\n' % src.rstrip()
+            msg += ''.join(self.tb).rstrip()
+            self.loop.call_exception_handler({'message': msg})
 
 
 class Future:
@@ -131,6 +133,7 @@ class Future:
     _result = None
     _exception = None
     _loop = None
+    _source_traceback = None
 
     _blocking = False  # proper use of future (yield vs yield from)
 
@@ -149,26 +152,52 @@ class Future:
         else:
             self._loop = loop
         self._callbacks = []
+        if self._loop.get_debug():
+            self._source_traceback = traceback.extract_stack(sys._getframe(1))
 
-    def __repr__(self):
-        res = self.__class__.__name__
+    def _format_callbacks(self):
+        cb = self._callbacks
+        size = len(cb)
+        if not size:
+            cb = ''
+
+        def format_cb(callback):
+            return events._format_callback(callback, ())
+
+        if size == 1:
+            cb = format_cb(cb[0])
+        elif size == 2:
+            cb = '{}, {}'.format(format_cb(cb[0]), format_cb(cb[1]))
+        elif size > 2:
+            cb = '{}, <{} more>, {}'.format(format_cb(cb[0]),
+                                            size-2,
+                                            format_cb(cb[-1]))
+        return 'cb=[%s]' % cb
+
+    def _repr_info(self):
+        info = [self._state.lower()]
         if self._state == _FINISHED:
             if self._exception is not None:
-                res += '<exception={!r}>'.format(self._exception)
+                info.append('exception={!r}'.format(self._exception))
             else:
-                res += '<result={!r}>'.format(self._result)
-        elif self._callbacks:
-            size = len(self._callbacks)
-            if size > 2:
-                res += '<{}, [{}, <{} more>, {}]>'.format(
-                    self._state, self._callbacks[0],
-                    size-2, self._callbacks[-1])
-            else:
-                res += '<{}, {}>'.format(self._state, self._callbacks)
-        else:
-            res += '<{}>'.format(self._state)
-        return res
+                # use reprlib to limit the length of the output, especially
+                # for very long strings
+                result = reprlib.repr(self._result)
+                info.append('result={}'.format(result))
+        if self._callbacks:
+            info.append(self._format_callbacks())
+        if self._source_traceback:
+            frame = self._source_traceback[-1]
+            info.append('created at %s:%s' % (frame[0], frame[1]))
+        return info
 
+    def __repr__(self):
+        info = self._repr_info()
+        return '<%s %s>' % (self.__class__.__name__, ' '.join(info))
+
+    # On Python 3.3 and older, objects with a destructor part of a reference
+    # cycle are never destroyed. It's not more the case on Python 3.4 thanks
+    # to the PEP 442.
     if _PY34:
         def __del__(self):
             if not self._log_traceback:
@@ -177,10 +206,13 @@ class Future:
                 return
             exc = self._exception
             context = {
-                'message': 'Future/Task exception was never retrieved',
+                'message': ('%s exception was never retrieved'
+                            % self.__class__.__name__),
                 'exception': exc,
                 'future': self,
             }
+            if self._source_traceback:
+                context['source_traceback'] = self._source_traceback
             self._loop.call_exception_handler(context)
 
     def cancel(self):
@@ -288,6 +320,12 @@ class Future:
 
     # So-called internal methods (note: no set_running_or_notify_cancel()).
 
+    def _set_result_unless_cancelled(self, result):
+        """Helper setting the result only if the future was not cancelled."""
+        if self.cancelled():
+            return
+        self.set_result(result)
+
     def set_result(self, result):
         """Mark the future done and set its result.
 
@@ -316,7 +354,7 @@ class Future:
         if _PY34:
             self._log_traceback = True
         else:
-            self._tb_logger = _TracebackLogger(exception, self._loop)
+            self._tb_logger = _TracebackLogger(self, exception)
             # Arrange for the logger to be activated after all callbacks
             # have had a chance to call result() or exception().
             self._loop.call_soon(self._tb_logger.activate)
@@ -367,5 +405,5 @@ def wrap_future(fut, *, loop=None):
     new_future.add_done_callback(_check_cancel_other)
     fut.add_done_callback(
         lambda future: loop.call_soon_threadsafe(
-            new_future._copy_state, fut))
+            new_future._copy_state, future))
     return new_future

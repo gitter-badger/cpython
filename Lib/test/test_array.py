@@ -285,17 +285,18 @@ class BaseTest:
 
     def test_iterator_pickle(self):
         data = array.array(self.typecode, self.example)
-        orgit = iter(data)
-        d = pickle.dumps(orgit)
-        it = pickle.loads(d)
-        self.assertEqual(type(orgit), type(it))
-        self.assertEqual(list(it), list(data))
-
-        if len(data):
+        for proto in range(pickle.HIGHEST_PROTOCOL + 1):
+            orgit = iter(data)
+            d = pickle.dumps(orgit, proto)
             it = pickle.loads(d)
-            next(it)
-            d = pickle.dumps(it)
-            self.assertEqual(list(it), list(data)[1:])
+            self.assertEqual(type(orgit), type(it))
+            self.assertEqual(list(it), list(data))
+
+            if len(data):
+                it = pickle.loads(d)
+                next(it)
+                d = pickle.dumps(it, proto)
+                self.assertEqual(list(it), list(data)[1:])
 
     def test_insert(self):
         a = array.array(self.typecode, self.example)
@@ -393,7 +394,9 @@ class BaseTest:
         self.assertEqual(a, b)
 
     def test_tofromstring(self):
-        nb_warnings = 4
+        # Warnings not raised when arguments are incorrect as Argument Clinic
+        # handles that before the warning can be raised.
+        nb_warnings = 2
         with warnings.catch_warnings(record=True) as r:
             warnings.filterwarnings("always",
                                     message=r"(to|from)string\(\) is deprecated",
@@ -1038,6 +1041,11 @@ class BaseTest:
             a = array.array(self.typecode, "foo")
             a = array.array(self.typecode, array.array('u', 'foo'))
 
+    @support.cpython_only
+    def test_obsolete_write_lock(self):
+        from _testcapi import getbuffer_with_null_view
+        a = array.array('B', b"")
+        self.assertRaises(BufferError, getbuffer_with_null_view, a)
 
 class StringTest(BaseTest):
 

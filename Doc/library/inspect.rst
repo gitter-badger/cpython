@@ -159,6 +159,16 @@ attributes:
 |           |                 | arguments and local       |
 |           |                 | variables                 |
 +-----------+-----------------+---------------------------+
+| generator | __name__        | name                      |
++-----------+-----------------+---------------------------+
+|           | __qualname__    | qualified name            |
++-----------+-----------------+---------------------------+
+|           | gi_frame        | frame                     |
++-----------+-----------------+---------------------------+
+|           | gi_running      | is the generator running? |
++-----------+-----------------+---------------------------+
+|           | gi_code         | code                      |
++-----------+-----------------+---------------------------+
 | builtin   | __doc__         | documentation string      |
 +-----------+-----------------+---------------------------+
 |           | __name__        | original name of this     |
@@ -168,6 +178,12 @@ attributes:
 |           |                 | method is bound, or       |
 |           |                 | ``None``                  |
 +-----------+-----------------+---------------------------+
+
+.. versionchanged:: 3.5
+
+   Add ``__qualname__`` attribute to generators. The ``__name__`` attribute of
+   generators is now set from the function name, instead of the code name, and
+   it can now be modified.
 
 
 .. function:: getmembers(object[, predicate])
@@ -340,6 +356,9 @@ Retrieving source code
 .. function:: getdoc(object)
 
    Get the documentation string for an object, cleaned up with :func:`cleandoc`.
+   If the documentation string for an object is not provided and the object is
+   a class, a method, a property or a descriptor, retrieve the documentation
+   string from the inheritance hierarchy.
 
 
 .. function:: getcomments(object)
@@ -463,7 +482,7 @@ function.
    modified copy.
 
    .. versionchanged:: 3.5
-      Signature objects are picklable.
+      Signature objects are picklable and hashable.
 
    .. attribute:: Signature.empty
 
@@ -530,7 +549,7 @@ function.
    you can use :meth:`Parameter.replace` to create a modified copy.
 
    .. versionchanged:: 3.5
-      Parameter objects are picklable.
+      Parameter objects are picklable and hashable.
 
    .. attribute:: Parameter.empty
 
@@ -662,7 +681,8 @@ function.
         ((5,), {})
 
         >>> for param in sig.parameters.values():
-        ...     if param.name not in ba.arguments:
+        ...     if (param.name not in ba.arguments
+        ...             and param.default is not param.empty):
         ...         ba.arguments[param.name] = param.default
 
         >>> ba.args, ba.kwargs
@@ -770,17 +790,20 @@ Classes and functions
    :func:`getargspec` or :func:`getfullargspec`.
 
    The first seven arguments are (``args``, ``varargs``, ``varkw``,
-   ``defaults``, ``kwonlyargs``, ``kwonlydefaults``, ``annotations``). The
-   other five arguments are the corresponding optional formatting functions
-   that are called to turn names and values into strings. The last argument
-   is an optional function to format the sequence of arguments. For example::
+   ``defaults``, ``kwonlyargs``, ``kwonlydefaults``, ``annotations``).
 
-    >>> from inspect import formatargspec, getfullargspec
-    >>> def f(a: int, b: float):
-    ...     pass
-    ...
-    >>> formatargspec(*getfullargspec(f))
-    '(a: int, b: float)'
+   The other six arguments are functions that are called to turn argument names,
+   ``*`` argument name, ``**`` argument name, default values, return annotation
+   and individual annotations into strings, respectively.
+
+   For example:
+
+   >>> from inspect import formatargspec, getfullargspec
+   >>> def f(a: int, b: float):
+   ...     pass
+   ...
+   >>> formatargspec(*getfullargspec(f))
+   '(a: int, b: float)'
 
 
 .. function:: formatargvalues(args[, varargs, varkw, locals, formatarg, formatvarargs, formatvarkw, formatvalue])
@@ -865,10 +888,16 @@ Classes and functions
 The interpreter stack
 ---------------------
 
-When the following functions return "frame records," each record is a tuple of
-six items: the frame object, the filename, the line number of the current line,
+When the following functions return "frame records," each record is a
+:term:`named tuple`
+``FrameInfo(frame, filename, lineno, function, code_context, index)``.
+The tuple contains the frame object, the filename, the line number of the
+current line,
 the function name, a list of lines of context from the source code, and the
 index of the current line within that list.
+
+.. versionchanged:: 3.5
+   Return a named tuple instead of a tuple.
 
 .. note::
 

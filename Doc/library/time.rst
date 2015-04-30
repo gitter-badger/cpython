@@ -133,8 +133,7 @@ The module defines the following functions and data items:
 
    On Unix, return the current processor time as a floating point number expressed
    in seconds.  The precision, and in fact the very definition of the meaning of
-   "processor time", depends on that of the C function of the same name, but in any
-   case, this is the function to use for benchmarking Python or timing algorithms.
+   "processor time", depends on that of the C function of the same name.
 
    On Windows, this function returns wall-clock seconds elapsed since the first
    call to this function, as a floating point number, based on the Win32 function
@@ -315,9 +314,9 @@ The module defines the following functions and data items:
    processes running for more than 49 days. On more recent versions of Windows
    and on other operating systems, :func:`monotonic` is system-wide.
 
-   Availability: Windows, Mac OS X, Linux, FreeBSD, OpenBSD, Solaris.
-
    .. versionadded:: 3.3
+   .. versionchanged:: 3.5
+      The function is now always available.
 
 
 .. function:: perf_counter()
@@ -343,12 +342,18 @@ The module defines the following functions and data items:
 
 .. function:: sleep(secs)
 
-   Suspend execution for the given number of seconds.  The argument may be a
-   floating point number to indicate a more precise sleep time. The actual
-   suspension time may be less than that requested because any caught signal will
-   terminate the :func:`sleep` following execution of that signal's catching
-   routine.  Also, the suspension time may be longer than requested by an arbitrary
-   amount because of the scheduling of other activity in the system.
+   Suspend execution of the calling thread for the given number of seconds.
+   The argument may be a floating point number to indicate a more precise sleep
+   time. The actual suspension time may be less than that requested because any
+   caught signal will terminate the :func:`sleep` following execution of that
+   signal's catching routine.  Also, the suspension time may be longer than
+   requested by an arbitrary amount because of the scheduling of other activity
+   in the system.
+
+   .. versionchanged:: 3.5
+      The function now sleeps at least *secs* even if the sleep is interrupted
+      by a signal, except if the signal handler raises an exception (see
+      :pep:`475` for the rationale).
 
 
 .. function:: strftime(format[, t])

@@ -76,7 +76,7 @@ Glossary
 
    BDFL
       Benevolent Dictator For Life, a.k.a. `Guido van Rossum
-      <http://www.python.org/~guido/>`_, Python's creator.
+      <https://www.python.org/~guido/>`_, Python's creator.
 
    binary file
       A :term:`file object` able to read and write
@@ -88,10 +88,17 @@ Glossary
    bytes-like object
       An object that supports the :ref:`bufferobjects`, like :class:`bytes`,
       :class:`bytearray` or :class:`memoryview`.  Bytes-like objects can
-      be used for various operations that expect binary data, such as
-      compression, saving to a binary file or sending over a socket.
-      Some operations need the binary data to be mutable, in which case
-      not all bytes-like objects can apply.
+      be used for various operations that work with binary data; these include
+      compression, saving to a binary file, and sending over a socket.
+
+      Some operations need the binary data to be mutable.  The documentation
+      often refers to these as "read-write bytes-like objects".  Example
+      mutable buffer objects include :class:`bytearray` and a
+      :class:`memoryview` of a :class:`bytearray`.
+      Other operations require the binary data to be stored in
+      immutable objects ("read-only bytes-like objects"); examples
+      of these include :class:`bytes` and a :class:`memoryview`
+      of a :class:`bytes` object.
 
    bytecode
       Python source code is compiled into bytecode, the internal representation
@@ -141,7 +148,7 @@ Glossary
 
    CPython
       The canonical implementation of the Python programming language, as
-      distributed on `python.org <http://python.org>`_.  The term "CPython"
+      distributed on `python.org <https://www.python.org>`_.  The term "CPython"
       is used when necessary to distinguish this implementation from others
       such as Jython or IronPython.
 
@@ -292,7 +299,7 @@ Glossary
    generator
       A function which returns an iterator.  It looks like a normal function
       except that it contains :keyword:`yield` statements for producing a series
-      a values usable in a for-loop or that can be retrieved one at a time with
+      of values usable in a for-loop or that can be retrieved one at a time with
       the :func:`next` function. Each :keyword:`yield` temporarily suspends
       processing, remembering the location execution state (including local
       variables and pending try-statements).  When the generator resumes, it
@@ -355,8 +362,8 @@ Glossary
       All of Python's immutable built-in objects are hashable, while no mutable
       containers (such as lists or dictionaries) are.  Objects which are
       instances of user-defined classes are hashable by default; they all
-      compare unequal (except with themselves), and their hash value is their
-      :func:`id`.
+      compare unequal (except with themselves), and their hash value is derived
+      from their :func:`id`.
 
    IDLE
       An Integrated Development Environment for Python.  IDLE is a basic editor
@@ -402,6 +409,19 @@ Glossary
       than compiled ones, though their programs generally also run more
       slowly.  See also :term:`interactive`.
 
+   interpreter shutdown
+      When asked to shut down, the Python interpreter enters a special phase
+      where it gradually releases all allocated resources, such as modules
+      and various critical internal structures.  It also makes several calls
+      to the :term:`garbage collector <garbage collection>`. This can trigger
+      the execution of code in user-defined destructors or weakref callbacks.
+      Code executed during the shutdown phase can encounter various
+      exceptions as the resources it relies on may not function anymore
+      (common examples are library modules or the warnings machinery).
+
+      The main reason for interpreter shutdown is that the ``__main__`` module
+      or the script being run has finished executing.
+
    iterable
       An object capable of returning its members one at a time. Examples of
       iterables include all sequence types (such as :class:`list`, :class:`str`,
@@ -444,12 +464,13 @@ Glossary
 
       A number of tools in Python accept key functions to control how elements
       are ordered or grouped.  They include :func:`min`, :func:`max`,
-      :func:`sorted`, :meth:`list.sort`, :func:`heapq.nsmallest`,
-      :func:`heapq.nlargest`, and :func:`itertools.groupby`.
+      :func:`sorted`, :meth:`list.sort`, :func:`heapq.merge`,
+      :func:`heapq.nsmallest`, :func:`heapq.nlargest`, and
+      :func:`itertools.groupby`.
 
       There are several ways to create a key function.  For example. the
       :meth:`str.lower` method can serve as a key function for case insensitive
-      sorts.  Alternatively, an ad-hoc key function can be built from a
+      sorts.  Alternatively, a key function can be built from a
       :keyword:`lambda` expression such as ``lambda r: (r[0], r[2])``.  Also,
       the :mod:`operator` module provides three key function constructors:
       :func:`~operator.attrgetter`, :func:`~operator.itemgetter`, and
@@ -530,7 +551,7 @@ Glossary
    method resolution order
       Method Resolution Order is the order in which base classes are searched
       for a member during lookup. See `The Python 2.3 Method Resolution Order
-      <http://www.python.org/download/releases/2.3/mro/>`_.
+      <https://www.python.org/download/releases/2.3/mro/>`_.
 
    module
       An object that serves as an organizational unit of Python code.  Modules
@@ -820,10 +841,13 @@ Glossary
       :meth:`~collections.somenamedtuple._asdict`. Examples of struct sequences
       include :data:`sys.float_info` and the return value of :func:`os.stat`.
 
+   text encoding
+      A codec which encodes Unicode strings to bytes.
+
    text file
       A :term:`file object` able to read and write :class:`str` objects.
       Often, a text file actually accesses a byte-oriented datastream
-      and handles the text encoding automatically.
+      and handles the :term:`text encoding` automatically.
 
       .. seealso::
          A :term:`binary file` reads and write :class:`bytes` objects.
@@ -848,7 +872,7 @@ Glossary
       recognized as ending a line: the Unix end-of-line convention ``'\n'``,
       the Windows convention ``'\r\n'``, and the old Macintosh convention
       ``'\r'``.  See :pep:`278` and :pep:`3116`, as well as
-      :func:`str.splitlines` for an additional use.
+      :func:`bytes.splitlines` for an additional use.
 
    view
       The objects returned from :meth:`dict.keys`, :meth:`dict.values`, and
@@ -856,6 +880,14 @@ Glossary
       that will see changes in the underlying dictionary.  To force the
       dictionary view to become a full list use ``list(dictview)``.  See
       :ref:`dict-views`.
+
+   virtual environment
+      A cooperatively isolated runtime environment that allows Python users
+      and applications to install and upgrade Python distribution packages
+      without interfering with the behaviour of other Python applications
+      running on the same system.
+
+      See also :ref:`scripts-pyvenv`
 
    virtual machine
       A computer defined entirely in software.  Python's virtual machine

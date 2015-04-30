@@ -70,10 +70,14 @@ this module.
    the following methods:
 
 
-   .. attribute:: is_attachment
+   .. method:: is_attachment
 
-      Set to ``True`` if there is a :mailheader:`Content-Disposition` header
+      Return ``True`` if there is a :mailheader:`Content-Disposition` header
       and its (case insensitive) value is ``attachment``, ``False`` otherwise.
+
+      .. versionchanged:: 3.4.2
+         is_attachment is now a method instead of a property, for consistency
+         with :meth:`~email.message.Message.is_multipart`.
 
 
    .. method:: get_body(preferencelist=('related', 'html', 'plain'))
@@ -421,7 +425,7 @@ Currently the email package provides only one concrete content manager,
        *cid* as its value.
 
        If *params* is specified, iterate its ``items`` method and use the
-       resulting ``(key, value)`` pairs to set additional paramters on the
+       resulting ``(key, value)`` pairs to set additional parameters on the
        :mailheader:`Content-Type` header.
 
        If *headers* is specified and is a list of strings of the form

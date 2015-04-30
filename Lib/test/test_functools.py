@@ -131,6 +131,16 @@ class TestPartial:
         join = self.partial(''.join)
         self.assertEqual(join(data), '0123456789')
 
+    def test_nested_optimization(self):
+        partial = self.partial
+        # Only "true" partial is optimized
+        if partial.__name__ != 'partial':
+            return
+        inner = partial(signature, 'asdf')
+        nested = partial(inner, bar=True)
+        flat = partial(signature, 'asdf', bar=True)
+        self.assertEqual(signature(nested), signature(flat))
+
 
 @unittest.skipUnless(c_functools, 'requires the C _functools module')
 class TestPartialC(TestPartial, unittest.TestCase):
@@ -155,9 +165,9 @@ class TestPartialC(TestPartial, unittest.TestCase):
     def test_repr(self):
         args = (object(), object())
         args_repr = ', '.join(repr(a) for a in args)
-        #kwargs = {'a': object(), 'b': object()}
-        kwargs = {'a': object()}
-        kwargs_repr = ', '.join("%s=%r" % (k, v) for k, v in kwargs.items())
+        kwargs = {'a': object(), 'b': object()}
+        kwargs_reprs = ['a={a!r}, b={b!r}'.format_map(kwargs),
+                        'b={b!r}, a={a!r}'.format_map(kwargs)]
         if self.partial is c_functools.partial:
             name = 'functools.partial'
         else:
@@ -172,18 +182,21 @@ class TestPartialC(TestPartial, unittest.TestCase):
                          repr(f))
 
         f = self.partial(capture, **kwargs)
-        self.assertEqual('{}({!r}, {})'.format(name, capture, kwargs_repr),
-                         repr(f))
+        self.assertIn(repr(f),
+                      ['{}({!r}, {})'.format(name, capture, kwargs_repr)
+                       for kwargs_repr in kwargs_reprs])
 
         f = self.partial(capture, *args, **kwargs)
-        self.assertEqual('{}({!r}, {}, {})'.format(name, capture, args_repr, kwargs_repr),
-                         repr(f))
+        self.assertIn(repr(f),
+                      ['{}({!r}, {}, {})'.format(name, capture, args_repr, kwargs_repr)
+                       for kwargs_repr in kwargs_reprs])
 
     def test_pickle(self):
         f = self.partial(signature, 'asdf', bar=True)
         f.add_something_to__dict__ = True
-        f_copy = pickle.loads(pickle.dumps(f))
-        self.assertEqual(signature(f), signature(f_copy))
+        for proto in range(pickle.HIGHEST_PROTOCOL + 1):
+            f_copy = pickle.loads(pickle.dumps(f, proto))
+            self.assertEqual(signature(f), signature(f_copy))
 
     # Issue 6083: Reference counting bug
     def test_setstate_refcount(self):
@@ -879,6 +892,24 @@ class TestTotalOrdering(unittest.TestCase):
             with self.assertRaises(TypeError):
                 a <= b
 
+    def test_pickle(self):
+        for proto in range(4, pickle.HIGHEST_PROTOCOL + 1):
+            for name in '__lt__', '__gt__', '__le__', '__ge__':
+                with self.subTest(method=name, proto=proto):
+                    method = getattr(Orderable_LT, name)
+                    method_copy = pickle.loads(pickle.dumps(method, proto))
+                    self.assertIs(method_copy, method)
+
+@functools.total_ordering
+class Orderable_LT:
+    def __init__(self, value):
+        self.value = value
+    def __lt__(self, other):
+        return self.value < other.value
+    def __eq__(self, other):
+        return self.value == other.value
+
+
 class TestLRU(unittest.TestCase):
 
     def test_lru(self):
@@ -1069,6 +1100,13 @@ class TestLRU(unittest.TestCase):
         test_func(DoubleEq(2))                      # Load the cache
         self.assertEqual(test_func(DoubleEq(2)),    # Trigger a re-entrant __eq__ call
                          DoubleEq(2))               # Verify the correct return value
+
+    def test_early_detection_of_bad_call(self):
+        # Issue #22184
+        with self.assertRaises(TypeError):
+            @functools.lru_cache
+            def f():
+                pass
 
 
 class TestSingleDispatch(unittest.TestCase):
@@ -1546,32 +1584,5 @@ class TestSingleDispatch(unittest.TestCase):
         functools.WeakKeyDictionary = _orig_wkd
 
 
-def test_main(verbose=None):
-    test_classes = (
-        TestPartialC,
-        TestPartialPy,
-        TestPartialCSubclass,
-        TestPartialMethod,
-        TestUpdateWrapper,
-        TestTotalOrdering,
-        TestCmpToKeyC,
-        TestCmpToKeyPy,
-        TestWraps,
-        TestReduce,
-        TestLRU,
-        TestSingleDispatch,
-    )
-    support.run_unittest(*test_classes)
-
-    # verify reference counting
-    if verbose and hasattr(sys, "gettotalrefcount"):
-        import gc
-        counts = [None] * 5
-        for i in range(len(counts)):
-            support.run_unittest(*test_classes)
-            gc.collect()
-            counts[i] = sys.gettotalrefcount()
-        print(counts)
-
 if __name__ == '__main__':
-    test_main(verbose=True)
+    unittest.main()

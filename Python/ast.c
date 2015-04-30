@@ -115,7 +115,7 @@ validate_arguments(arguments_ty args)
     }
     if (!validate_args(args->kwonlyargs))
         return 0;
-    if (args->kwarg && args->kwarg->annotation 
+    if (args->kwarg && args->kwarg->annotation
         && !validate_expr(args->kwarg->annotation, Load)) {
             return 0;
     }
@@ -164,6 +164,8 @@ validate_expr(expr_ty exp, expr_context_ty ctx)
             return 0;
         }
         check_ctx = 0;
+        /* set actual_ctx to prevent gcc warning */
+        actual_ctx = 0;
     }
     if (check_ctx && actual_ctx != ctx) {
         PyErr_Format(PyExc_ValueError, "expression must have %s context but has %s instead",
@@ -451,7 +453,7 @@ validate_exprs(asdl_seq *exprs, expr_context_ty ctx, int null_ok)
                             "None disallowed in expression list");
             return 0;
         }
-            
+
     }
     return 1;
 }
@@ -825,6 +827,8 @@ get_operator(const node *n)
             return Sub;
         case STAR:
             return Mult;
+        case AT:
+            return MatMult;
         case SLASH:
             return Div;
         case DOUBLESLASH:
@@ -1030,6 +1034,8 @@ ast_for_augassign(struct compiling *c, const node *n)
                 return Pow;
             else
                 return Mult;
+        case '@':
+            return MatMult;
         default:
             PyErr_Format(PyExc_SystemError, "invalid augassign: %s", STR(n));
             return (operator_ty)0;
@@ -1123,7 +1129,7 @@ ast_for_arg(struct compiling *c, const node *n)
     identifier name;
     expr_ty annotation = NULL;
     node *ch;
-    arg_ty tmp;
+    arg_ty ret;
 
     assert(TYPE(n) == tfpdef || TYPE(n) == vfpdef);
     ch = CHILD(n, 0);
@@ -1139,13 +1145,12 @@ ast_for_arg(struct compiling *c, const node *n)
             return NULL;
     }
 
-    tmp = arg(name, annotation, c->c_arena);
-    if (!tmp)
+    ret = arg(name, annotation, c->c_arena);
+    if (!ret)
         return NULL;
-
-    tmp->lineno = LINENO(n);
-    tmp->col_offset = n->n_col_offset;
-    return tmp;
+    ret->lineno = LINENO(n);
+    ret->col_offset = n->n_col_offset;
+    return ret;
 }
 
 /* returns -1 if failed to handle keyword only arguments
@@ -2103,22 +2108,15 @@ ast_for_trailer(struct compiling *c, const node *n, expr_ty left_expr)
         if (NCH(n) == 2)
             return Call(left_expr, NULL, NULL, NULL, NULL, LINENO(n),
                         n->n_col_offset, c->c_arena);
-        else {
-            expr_ty tmp = ast_for_call(c, CHILD(n, 1), left_expr);
-            if (!tmp)
-                return NULL;
-
-            tmp->lineno = LINENO(n);
-            tmp->col_offset = n->n_col_offset;
-            return tmp;
-        }
+        else
+            return ast_for_call(c, CHILD(n, 1), left_expr);
     }
-    else if (TYPE(CHILD(n, 0)) == DOT ) {
+    else if (TYPE(CHILD(n, 0)) == DOT) {
         PyObject *attr_id = NEW_IDENTIFIER(CHILD(n, 1));
         if (!attr_id)
             return NULL;
         return Attribute(left_expr, attr_id, Load,
-                         LINENO(CHILD(n, 1)), CHILD(n, 1)->n_col_offset, c->c_arena);
+                         LINENO(n), n->n_col_offset, c->c_arena);
     }
     else {
         REQ(CHILD(n, 0), LSQB);
@@ -2219,16 +2217,15 @@ ast_for_power(struct compiling *c, const node *n)
         tmp = ast_for_trailer(c, ch, e);
         if (!tmp)
             return NULL;
+        tmp->lineno = e->lineno;
+        tmp->col_offset = e->col_offset;
         e = tmp;
     }
     if (TYPE(CHILD(n, NCH(n) - 1)) == factor) {
         expr_ty f = ast_for_expr(c, CHILD(n, NCH(n) - 1));
         if (!f)
             return NULL;
-        tmp = BinOp(e, Pow, f, LINENO(n), n->n_col_offset, c->c_arena);
-        if (!tmp)
-            return NULL;
-        e = tmp;
+        e = BinOp(e, Pow, f, LINENO(n), n->n_col_offset, c->c_arena);
     }
     return e;
 }
@@ -2266,7 +2263,7 @@ ast_for_expr(struct compiling *c, const node *n)
        and_expr: shift_expr ('&' shift_expr)*
        shift_expr: arith_expr (('<<'|'>>') arith_expr)*
        arith_expr: term (('+'|'-') term)*
-       term: factor (('*'|'/'|'%'|'//') factor)*
+       term: factor (('*'|'@'|'/'|'%'|'//') factor)*
        factor: ('+'|'-'|'~') factor | power
        power: atom trailer* ('**' factor)*
     */
@@ -2577,7 +2574,7 @@ ast_for_expr_stmt(struct compiling *c, const node *n)
     /* expr_stmt: testlist_star_expr (augassign (yield_expr|testlist)
                 | ('=' (yield_expr|testlist))*)
        testlist_star_expr: (test|star_expr) (',' test|star_expr)* [',']
-       augassign: '+=' | '-=' | '*=' | '/=' | '%=' | '&=' | '|=' | '^='
+       augassign: '+=' | '-=' | '*=' | '@=' | '/=' | '%=' | '&=' | '|=' | '^='
                 | '<<=' | '>>=' | '**=' | '//='
        test: ... here starts the operator precendence dance
      */

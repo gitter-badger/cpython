@@ -1,4 +1,4 @@
-from test.support import run_unittest, unload, check_warnings
+from test.support import run_unittest, unload, check_warnings, CleanImport
 import unittest
 import sys
 import importlib
@@ -104,6 +104,9 @@ class PkgutilTests(unittest.TestCase):
 class PkgutilPEP302Tests(unittest.TestCase):
 
     class MyTestLoader(object):
+        def create_module(self, spec):
+            return None
+
         def exec_module(self, mod):
             # Count how many times the module is reloaded
             mod.__dict__['loads'] = mod.__dict__.get('loads', 0) + 1
@@ -345,6 +348,37 @@ class ImportlibMigrationTests(unittest.TestCase):
         finally:
             __loader__ = this_loader
 
+    def test_get_loader_handles_missing_spec_attribute(self):
+        name = 'spam'
+        mod = type(sys)(name)
+        del mod.__spec__
+        with CleanImport(name):
+            sys.modules[name] = mod
+            loader = pkgutil.get_loader(name)
+        self.assertIsNone(loader)
+
+    def test_get_loader_handles_spec_attribute_none(self):
+        name = 'spam'
+        mod = type(sys)(name)
+        mod.__spec__ = None
+        with CleanImport(name):
+            sys.modules[name] = mod
+            loader = pkgutil.get_loader(name)
+        self.assertIsNone(loader)
+
+    def test_get_loader_None_in_sys_modules(self):
+        name = 'totally bogus'
+        sys.modules[name] = None
+        try:
+            loader = pkgutil.get_loader(name)
+        finally:
+            del sys.modules[name]
+        self.assertIsNone(loader)
+
+    def test_find_loader_missing_module(self):
+        name = 'totally bogus'
+        loader = pkgutil.find_loader(name)
+        self.assertIsNone(loader)
 
     def test_find_loader_avoids_emulation(self):
         with check_warnings() as w:

@@ -73,10 +73,11 @@ objects:
    Return the number of times *x* appears in the list.
 
 
-.. method:: list.sort()
+.. method:: list.sort(key=None, reverse=False)
    :noindex:
 
-   Sort the items of the list in place.
+   Sort the items of the list in place (the arguments can be used for sort
+   customization, see :func:`sorted` for their explanation).
 
 
 .. method:: list.reverse()
@@ -111,10 +112,15 @@ An example that uses most of the list methods::
    >>> a.sort()
    >>> a
    [-1, 1, 66.25, 333, 333, 1234.5]
+   >>> a.pop()
+   1234.5
+   >>> a
+   [-1, 1, 66.25, 333, 333]
 
 You might have noticed that methods like ``insert``, ``remove`` or ``sort`` that
-modify the list have no return value printed -- they return ``None``. [1]_  This
-is a design principle for all mutable data structures in Python.
+only modify the list have no return value printed -- they return the default
+``None``. [1]_  This is a design principle for all mutable data structures in
+Python.
 
 
 .. _tut-lists-as-stacks:
@@ -194,12 +200,17 @@ For example, assume we want to create a list of squares, like::
    >>> squares
    [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]
 
-We can obtain the same result with::
+Note that this creates (or overwrites) a variable named ``x`` that still exists
+after the loop completes.  We can calculate the list of squares without any
+side effects using::
+
+   squares = list(map(lambda x: x**2, range(10)))
+
+or, equivalently::
 
    squares = [x**2 for x in range(10)]
 
-This is also equivalent to ``squares = list(map(lambda x: x**2, range(10)))``,
-but it's more concise and readable.
+which is more concise and readable.
 
 A list comprehension consists of brackets containing an expression followed
 by a :keyword:`for` clause, then zero or more :keyword:`for` or :keyword:`if`
@@ -674,7 +685,7 @@ the same type, the lexicographical comparison is carried out recursively.  If
 all items of two sequences compare equal, the sequences are considered equal.
 If one sequence is an initial sub-sequence of the other, the shorter sequence is
 the smaller (lesser) one.  Lexicographical ordering for strings uses the Unicode
-codepoint number to order individual characters.  Some examples of comparisons
+code point number to order individual characters.  Some examples of comparisons
 between sequences of the same type::
 
    (1, 2, 3)              < (1, 2, 4)

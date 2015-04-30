@@ -134,7 +134,7 @@ particular functionality, for example::
 
 Several of the ABCs are also useful as mixins that make it easier to develop
 classes supporting container APIs.  For example, to write a class supporting
-the full :class:`Set` API, it only necessary to supply the three underlying
+the full :class:`Set` API, it is only necessary to supply the three underlying
 abstract methods: :meth:`__contains__`, :meth:`__iter__`, and :meth:`__len__`.
 The ABC supplies the remaining methods such as :meth:`__and__` and
 :meth:`isdisjoint`::
@@ -173,13 +173,13 @@ Notes on using :class:`Set` and :class:`MutableSet` as a mixin:
 
 (2)
    To override the comparisons (presumably for speed, as the
-   semantics are fixed), redefine :meth:`__le__` and
+   semantics are fixed), redefine :meth:`__le__` and :meth:`__ge__`,
    then the other operations will automatically follow suit.
 
 (3)
    The :class:`Set` mixin provides a :meth:`_hash` method to compute a hash value
    for the set; however, :meth:`__hash__` is not defined because not all sets
-   are hashable or immutable.  To add set hashabilty using mixins,
+   are hashable or immutable.  To add set hashability using mixins,
    inherit from both :meth:`Set` and :meth:`Hashable`, then define
    ``__hash__ = Set._hash``.
 

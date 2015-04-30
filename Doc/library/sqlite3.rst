@@ -646,8 +646,11 @@ Row Objects
 
    .. method:: keys
 
-      This method returns a tuple of column names. Immediately after a query,
+      This method returns a list of column names. Immediately after a query,
       it is the first member of each tuple in :attr:`Cursor.description`.
+
+   .. versionchanged:: 3.5
+      Added support of slicing.
 
 Let's assume we initialize a table as in the example given above::
 

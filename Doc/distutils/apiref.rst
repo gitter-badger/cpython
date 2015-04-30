@@ -78,7 +78,7 @@ setup script). Indirectly provides the  :class:`distutils.dist.Distribution` and
    |                    | be built                       | :class:`distutils.core.Extension`                           |
    +--------------------+--------------------------------+-------------------------------------------------------------+
    | *classifiers*      | A list of categories for the   | a list of strings; valid classifiers are listed on `PyPI    |
-   |                    | package                        | <http://pypi.python.org/pypi?:action=list_classifiers>`_.   |
+   |                    | package                        | <https://pypi.python.org/pypi?:action=list_classifiers>`_.  |
    +--------------------+--------------------------------+-------------------------------------------------------------+
    | *distclass*        | the :class:`Distribution`      | a subclass of                                               |
    |                    | class to use                   | :class:`distutils.core.Distribution`                        |
@@ -964,7 +964,7 @@ directories.
 .. function:: create_tree(base_dir, files[, mode=0o777, verbose=0, dry_run=0])
 
    Create all the empty directories under *base_dir* needed to put *files* there.
-   *base_dir* is just the a name of a directory which doesn't necessarily exist
+   *base_dir* is just the name of a directory which doesn't necessarily exist
    yet; *files* is a list of filenames to be interpreted relative to *base_dir*.
    *base_dir* + the directory portion of every file in *files* will be created if
    it doesn't already exist.  *mode*, *verbose* and *dry_run* flags  are as for
@@ -1099,13 +1099,13 @@ other utility module.
    during the build of Python), not the OS version of the current system.
 
    For universal binary builds on Mac OS X the architecture value reflects
-   the univeral binary status instead of the architecture of the current
+   the universal binary status instead of the architecture of the current
    processor. For 32-bit universal binaries the architecture is ``fat``,
    for 64-bit universal binaries the architecture is ``fat64``, and
    for 4-way universal binaries the architecture is ``universal``. Starting
    from Python 2.7 and Python 3.2 the architecture ``fat3`` is used for
    a 3-way universal build (ppc, i386, x86_64) and ``intel`` is used for
-   a univeral build with the i386 and x86_64 architectures
+   a universal build with the i386 and x86_64 architectures
 
    Examples of returned values on Mac OS X:
 
@@ -1193,12 +1193,12 @@ other utility module.
 
 .. function:: byte_compile(py_files[, optimize=0, force=0, prefix=None, base_dir=None, verbose=1, dry_run=0, direct=None])
 
-   Byte-compile a collection of Python source files to either :file:`.pyc` or
-   :file:`.pyo` files in a :file:`__pycache__` subdirectory (see :pep:`3147`).
+   Byte-compile a collection of Python source files to :file:`.pyc` files in a
+   :file:`__pycache__` subdirectory (see :pep:`3147` and :pep:`488`).
    *py_files* is a list of files to compile; any files that don't end in
    :file:`.py` are silently skipped.  *optimize* must be one of the following:
 
-   * ``0`` - don't optimize (generate :file:`.pyc`)
+   * ``0`` - don't optimize
    * ``1`` - normal optimization (like ``python -O``)
    * ``2`` - extra optimization (like ``python -OO``)
 
@@ -1222,9 +1222,12 @@ other utility module.
    doing, leave it set to ``None``.
 
    .. versionchanged:: 3.2.3
-      Create ``.pyc`` or ``.pyo`` files with an :func:`import magic tag
+      Create ``.pyc`` files with an :func:`import magic tag
       <imp.get_tag>` in their name, in a :file:`__pycache__` subdirectory
       instead of files without tag in the current directory.
+
+   .. versionchanged: 3.5
+      Create ``.pyc`` files according to :pep:`488`.
 
 
 .. function:: rfc822_escape(header)

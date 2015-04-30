@@ -27,10 +27,10 @@ frame (1 frame). To store 25 frames at startup: set the
 
 
 Examples
-========
+--------
 
 Display the top 10
-------------------
+^^^^^^^^^^^^^^^^^^
 
 Display the 10 files allocating the most memory::
 
@@ -70,7 +70,7 @@ See :meth:`Snapshot.statistics` for more options.
 
 
 Compute differences
--------------------
+^^^^^^^^^^^^^^^^^^^
 
 Take two snapshots and display the differences::
 
@@ -114,7 +114,7 @@ the :meth:`Snapshot.dump` method to analyze the snapshot offline. Then use the
 
 
 Get the traceback of a memory block
------------------------------------
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Code to display the traceback of the biggest memory block::
 
@@ -179,7 +179,7 @@ loaded.
 
 
 Pretty top
-----------
+^^^^^^^^^^
 
 Code to display the 10 lines allocating the most memory with a pretty output,
 ignoring ``<frozen importlib._bootstrap>`` and ``<unknown>`` files::
@@ -249,10 +249,10 @@ See :meth:`Snapshot.statistics` for more options.
 
 
 API
-===
+---
 
 Functions
----------
+^^^^^^^^^
 
 .. function:: clear_traces()
 
@@ -350,20 +350,20 @@ Functions
    the *nframe* parameter of the :func:`start` function to store more frames.
 
    The :mod:`tracemalloc` module must be tracing memory allocations to take a
-   snapshot, see the the :func:`start` function.
+   snapshot, see the :func:`start` function.
 
    See also the :func:`get_object_traceback` function.
 
 
 Filter
-------
+^^^^^^
 
 .. class:: Filter(inclusive: bool, filename_pattern: str, lineno: int=None, all_frames: bool=False)
 
    Filter on traces of memory blocks.
 
    See the :func:`fnmatch.fnmatch` function for the syntax of
-   *filename_pattern*. The ``'.pyc'`` and ``'.pyo'`` file extensions are
+   *filename_pattern*. The ``'.pyc'`` file extension is
    replaced with ``'.py'``.
 
    Examples:
@@ -373,6 +373,10 @@ Filter
    * ``Filter(False, tracemalloc.__file__)`` excludes traces of the
      :mod:`tracemalloc` module
    * ``Filter(False, "<unknown>")`` excludes empty tracebacks
+
+
+   .. versionchanged:: 3.5
+      The ``'.pyo'`` file extension is no longer replaced with ``'.py'``.
 
    .. attribute:: inclusive
 
@@ -404,7 +408,7 @@ Filter
 
 
 Frame
------
+^^^^^
 
 .. class:: Frame
 
@@ -422,7 +426,7 @@ Frame
 
 
 Snapshot
---------
+^^^^^^^^
 
 .. class:: Snapshot
 
@@ -435,7 +439,7 @@ Snapshot
       Compute the differences with an old snapshot. Get statistics as a sorted
       list of :class:`StatisticDiff` instances grouped by *group_by*.
 
-      See the :meth:`statistics` method for *group_by* and *cumulative*
+      See the :meth:`Snapshot.statistics` method for *group_by* and *cumulative*
       parameters.
 
       The result is sorted from the biggest to the smallest by: absolute value
@@ -508,7 +512,7 @@ Snapshot
 
 
 Statistic
----------
+^^^^^^^^^
 
 .. class:: Statistic
 
@@ -533,7 +537,7 @@ Statistic
 
 
 StatisticDiff
--------------
+^^^^^^^^^^^^^
 
 .. class:: StatisticDiff
 
@@ -572,7 +576,7 @@ StatisticDiff
 
 
 Trace
------
+^^^^^
 
 .. class:: Trace
 
@@ -592,7 +596,7 @@ Trace
 
 
 Traceback
----------
+^^^^^^^^^
 
 .. class:: Traceback
 
@@ -631,4 +635,3 @@ Traceback
               obj = Object()
             File "test.py", line 12
               tb = tracemalloc.get_object_traceback(f())
-

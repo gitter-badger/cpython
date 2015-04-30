@@ -6,6 +6,11 @@ import pickle
 class TupleTest(seq_tests.CommonTest):
     type2test = tuple
 
+    def test_getitem_error(self):
+        msg = "tuple indices must be integers or slices"
+        with self.assertRaisesRegex(TypeError, msg):
+            ()['a']
+
     def test_constructors(self):
         super().test_constructors()
         # calling built-in types without argument must return empty
@@ -169,29 +174,31 @@ class TupleTest(seq_tests.CommonTest):
         # Userlist iterators don't support pickling yet since
         # they are based on generators.
         data = self.type2test([4, 5, 6, 7])
-        itorg = iter(data)
-        d = pickle.dumps(itorg)
-        it = pickle.loads(d)
-        self.assertEqual(type(itorg), type(it))
-        self.assertEqual(self.type2test(it), self.type2test(data))
+        for proto in range(pickle.HIGHEST_PROTOCOL + 1):
+            itorg = iter(data)
+            d = pickle.dumps(itorg, proto)
+            it = pickle.loads(d)
+            self.assertEqual(type(itorg), type(it))
+            self.assertEqual(self.type2test(it), self.type2test(data))
 
-        it = pickle.loads(d)
-        next(it)
-        d = pickle.dumps(it)
-        self.assertEqual(self.type2test(it), self.type2test(data)[1:])
+            it = pickle.loads(d)
+            next(it)
+            d = pickle.dumps(it, proto)
+            self.assertEqual(self.type2test(it), self.type2test(data)[1:])
 
     def test_reversed_pickle(self):
         data = self.type2test([4, 5, 6, 7])
-        itorg = reversed(data)
-        d = pickle.dumps(itorg)
-        it = pickle.loads(d)
-        self.assertEqual(type(itorg), type(it))
-        self.assertEqual(self.type2test(it), self.type2test(reversed(data)))
+        for proto in range(pickle.HIGHEST_PROTOCOL + 1):
+            itorg = reversed(data)
+            d = pickle.dumps(itorg, proto)
+            it = pickle.loads(d)
+            self.assertEqual(type(itorg), type(it))
+            self.assertEqual(self.type2test(it), self.type2test(reversed(data)))
 
-        it = pickle.loads(d)
-        next(it)
-        d = pickle.dumps(it)
-        self.assertEqual(self.type2test(it), self.type2test(reversed(data))[1:])
+            it = pickle.loads(d)
+            next(it)
+            d = pickle.dumps(it, proto)
+            self.assertEqual(self.type2test(it), self.type2test(reversed(data))[1:])
 
     def test_no_comdat_folding(self):
         # Issue 8847: In the PGO build, the MSVC linker's COMDAT folding
@@ -209,8 +216,5 @@ class TupleTest(seq_tests.CommonTest):
         self.assertLess(a, b)
         self.assertLess(b, c)
 
-def test_main():
-    support.run_unittest(TupleTest)
-
-if __name__=="__main__":
-    test_main()
+if __name__ == "__main__":
+    unittest.main()

@@ -772,6 +772,12 @@ static PyStructSequence_Desc windows_version_desc = {
                                  via indexing, the rest are name only */
 };
 
+/* Disable deprecation warnings about GetVersionEx as the result is
+   being passed straight through to the caller, who is responsible for
+   using it correctly. */
+#pragma warning(push)
+#pragma warning(disable:4996)
+
 static PyObject *
 sys_getwindowsversion(PyObject *self)
 {
@@ -802,6 +808,8 @@ sys_getwindowsversion(PyObject *self)
     }
     return version;
 }
+
+#pragma warning(pop)
 
 #endif /* MS_WINDOWS */
 
@@ -863,29 +871,16 @@ sys_mdebug(PyObject *self, PyObject *args)
 }
 #endif /* USE_MALLOPT */
 
-static PyObject *
-sys_getsizeof(PyObject *self, PyObject *args, PyObject *kwds)
+size_t
+_PySys_GetSizeOf(PyObject *o)
 {
     PyObject *res = NULL;
-    static PyObject *gc_head_size = NULL;
-    static char *kwlist[] = {"object", "default", 0};
-    PyObject *o, *dflt = NULL;
     PyObject *method;
-
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O|O:getsizeof",
-                                     kwlist, &o, &dflt))
-        return NULL;
-
-    /* Initialize static variable for GC head size */
-    if (gc_head_size == NULL) {
-        gc_head_size = PyLong_FromSsize_t(sizeof(PyGC_Head));
-        if (gc_head_size == NULL)
-            return NULL;
-    }
+    Py_ssize_t size;
 
     /* Make sure the type is initialized. float gets initialized late */
     if (PyType_Ready(Py_TYPE(o)) < 0)
-        return NULL;
+        return (size_t)-1;
 
     method = _PyObject_LookupSpecial(o, &PyId___sizeof__);
     if (method == NULL) {
@@ -899,24 +894,50 @@ sys_getsizeof(PyObject *self, PyObject *args, PyObject *kwds)
         Py_DECREF(method);
     }
 
-    /* Has a default value been given */
-    if ((res == NULL) && (dflt != NULL) &&
-        PyErr_ExceptionMatches(PyExc_TypeError))
-    {
-        PyErr_Clear();
-        Py_INCREF(dflt);
-        return dflt;
+    if (res == NULL)
+        return (size_t)-1;
+
+    size = PyLong_AsSsize_t(res);
+    Py_DECREF(res);
+    if (size == -1 && PyErr_Occurred())
+        return (size_t)-1;
+
+    if (size < 0) {
+        PyErr_SetString(PyExc_ValueError, "__sizeof__() should return >= 0");
+        return (size_t)-1;
     }
-    else if (res == NULL)
-        return res;
 
     /* add gc_head size */
-    if (PyObject_IS_GC(o)) {
-        PyObject *tmp = res;
-        res = PyNumber_Add(tmp, gc_head_size);
-        Py_DECREF(tmp);
+    if (PyObject_IS_GC(o))
+        return ((size_t)size) + sizeof(PyGC_Head);
+    return (size_t)size;
+}
+
+static PyObject *
+sys_getsizeof(PyObject *self, PyObject *args, PyObject *kwds)
+{
+    static char *kwlist[] = {"object", "default", 0};
+    size_t size;
+    PyObject *o, *dflt = NULL;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O|O:getsizeof",
+                                     kwlist, &o, &dflt))
+        return NULL;
+
+    size = _PySys_GetSizeOf(o);
+
+    if (size == (size_t)-1 && PyErr_Occurred()) {
+        /* Has a default value been given */
+        if (dflt != NULL && PyErr_ExceptionMatches(PyExc_TypeError)) {
+            PyErr_Clear();
+            Py_INCREF(dflt);
+            return dflt;
+        }
+        else
+            return NULL;
     }
-    return res;
+
+    return PyLong_FromSize_t(size);
 }
 
 PyDoc_STRVAR(getsizeof_doc,
@@ -1108,6 +1129,16 @@ PyDoc_STRVAR(sys_clear_type_cache__doc__,
 "_clear_type_cache() -> None\n\
 Clear the internal type lookup cache.");
 
+static PyObject *
+sys_is_finalizing(PyObject* self, PyObject* args)
+{
+    return PyBool_FromLong(_Py_Finalizing != NULL);
+}
+
+PyDoc_STRVAR(is_finalizing_doc,
+"is_finalizing()\n\
+Return True if Python is exiting.");
+
 
 static PyMethodDef sys_methods[] = {
     /* Might as well keep this in alphabetic order */
@@ -1154,6 +1185,7 @@ static PyMethodDef sys_methods[] = {
      getwindowsversion_doc},
 #endif /* MS_WINDOWS */
     {"intern",          sys_intern,     METH_VARARGS, intern_doc},
+    {"is_finalizing",   sys_is_finalizing, METH_NOARGS, is_finalizing_doc},
 #ifdef USE_MALLOPT
     {"mdebug",          sys_mdebug, METH_VARARGS},
 #endif
@@ -1355,7 +1387,7 @@ hexversion -- version information encoded as a single integer\n\
 implementation -- Python implementation information.\n\
 int_info -- a struct sequence with information about the int implementation.\n\
 maxsize -- the largest supported length of containers.\n\
-maxunicode -- the value of the largest Unicode codepoint\n\
+maxunicode -- the value of the largest Unicode code point\n\
 platform -- platform identifier\n\
 prefix -- prefix used to find the Python library\n\
 thread_info -- a struct sequence with information about the thread implementation.\n\
@@ -1546,7 +1578,7 @@ const char *_PySys_ImplName = NAME;
 #define STRIFY(name) QUOTE(name)
 #define MAJOR STRIFY(PY_MAJOR_VERSION)
 #define MINOR STRIFY(PY_MINOR_VERSION)
-#define TAG NAME "-" MAJOR MINOR;
+#define TAG NAME "-" MAJOR MINOR
 const char *_PySys_ImplCacheTag = TAG;
 #undef NAME
 #undef QUOTE
@@ -1622,6 +1654,7 @@ PyObject *
 _PySys_Init(void)
 {
     PyObject *m, *sysdict, *version_info;
+    int res;
 
     m = PyModule_Create(&sysmodule);
     if (m == NULL)
@@ -1629,7 +1662,6 @@ _PySys_Init(void)
     sysdict = PyModule_GetDict(m);
 #define SET_SYS_FROM_STRING_BORROW(key, value)             \
     do {                                                   \
-        int res;                                           \
         PyObject *v = (value);                             \
         if (v == NULL)                                     \
             return NULL;                                   \
@@ -1640,7 +1672,6 @@ _PySys_Init(void)
     } while (0)
 #define SET_SYS_FROM_STRING(key, value)                    \
     do {                                                   \
-        int res;                                           \
         PyObject *v = (value);                             \
         if (v == NULL)                                     \
             return NULL;                                   \
@@ -1658,8 +1689,8 @@ _PySys_Init(void)
     the shell already prevents that. */
 #if !defined(MS_WINDOWS)
     {
-        struct stat sb;
-        if (fstat(fileno(stdin), &sb) == 0 &&
+        struct _Py_stat_struct sb;
+        if (_Py_fstat_noraise(fileno(stdin), &sb) == 0 &&
             S_ISDIR(sb.st_mode)) {
             /* There's nothing more we can do. */
             /* Py_FatalError() will core dump, so just exit. */
@@ -1669,7 +1700,7 @@ _PySys_Init(void)
     }
 #endif
 
-    /* stdin/stdout/stderr are now set by pythonrun.c */
+    /* stdin/stdout/stderr are set in pylifecycle.c */
 
     SET_SYS_FROM_STRING_BORROW("__displayhook__",
                                PyDict_GetItemString(sysdict, "displayhook"));
@@ -1759,6 +1790,9 @@ _PySys_Init(void)
     /* prevent user from creating new instances */
     VersionInfoType.tp_init = NULL;
     VersionInfoType.tp_new = NULL;
+    res = PyDict_DelItemString(VersionInfoType.tp_dict, "__new__");
+    if (res < 0 && PyErr_ExceptionMatches(PyExc_KeyError))
+        PyErr_Clear();
 
     /* implementation */
     SET_SYS_FROM_STRING("implementation", make_impl_info(version_info));
@@ -1772,7 +1806,9 @@ _PySys_Init(void)
     /* prevent user from creating new instances */
     FlagsType.tp_init = NULL;
     FlagsType.tp_new = NULL;
-
+    res = PyDict_DelItemString(FlagsType.tp_dict, "__new__");
+    if (res < 0 && PyErr_ExceptionMatches(PyExc_KeyError))
+        PyErr_Clear();
 
 #if defined(MS_WINDOWS)
     /* getwindowsversion */
@@ -1783,6 +1819,9 @@ _PySys_Init(void)
     /* prevent user from creating new instances */
     WindowsVersionType.tp_init = NULL;
     WindowsVersionType.tp_new = NULL;
+    res = PyDict_DelItemString(WindowsVersionType.tp_dict, "__new__");
+    if (res < 0 && PyErr_ExceptionMatches(PyExc_KeyError))
+        PyErr_Clear();
 #endif
 
     /* float repr style: 0.03 (short) vs 0.029999999999999999 (legacy) */

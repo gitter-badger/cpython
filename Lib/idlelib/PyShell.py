@@ -21,7 +21,7 @@ from platform import python_version, system
 try:
     from tkinter import *
 except ImportError:
-    print("** IDLE can't import Tkinter.  " \
+    print("** IDLE can't import Tkinter.\n"
           "Your Python may not be configured for Tk. **", file=sys.__stderr__)
     sys.exit(1)
 import tkinter.messagebox as tkMessageBox
@@ -138,6 +138,7 @@ class PyShellEditorWindow(EditorWindow):
         self.io.set_filename_change_hook(filename_changed_hook)
         if self.io.filename:
             self.restore_file_breaks()
+        self.color_breakpoint_text()
 
     rmenu_specs = [
         ("Cut", "<<cut>>", "rmenu_check_cut"),
@@ -147,6 +148,18 @@ class PyShellEditorWindow(EditorWindow):
         ("Set Breakpoint", "<<set-breakpoint-here>>", None),
         ("Clear Breakpoint", "<<clear-breakpoint-here>>", None)
     ]
+
+    def color_breakpoint_text(self, color=True):
+        "Turn colorizing of breakpoint text on or off"
+        if self.io is None:
+            # possible due to update in restore_file_breaks
+            return
+        if color:
+            theme = idleConf.GetOption('main','Theme','name')
+            cfg = idleConf.GetHighlight(theme, "break")
+        else:
+            cfg = {'foreground': '', 'background': ''}
+        self.text.tag_config('BREAK', cfg)
 
     def set_breakpoint(self, lineno):
         text = self.text
@@ -217,13 +230,8 @@ class PyShellEditorWindow(EditorWindow):
         #     This is necessary to keep the saved breaks synched with the
         #     saved file.
         #
-        #     Breakpoints are set as tagged ranges in the text.  Certain
-        #     kinds of edits cause these ranges to be deleted: Inserting
-        #     or deleting a line just before a breakpoint, and certain
-        #     deletions prior to a breakpoint.  These issues need to be
-        #     investigated and understood.  It's not clear if they are
-        #     Tk issues or IDLE issues, or whether they can actually
-        #     be fixed.  Since a modified file has to be saved before it is
+        #     Breakpoints are set as tagged ranges in the text.
+        #     Since a modified file has to be saved before it is
         #     run, and since self.breakpoints (from which the subprocess
         #     debugger is loaded) is updated during the save, the visible
         #     breaks stay synched with the subprocess even if one of these
@@ -641,9 +649,9 @@ class ModifiedInterpreter(InteractiveInterpreter):
             code = compile(source, filename, "exec")
         except (OverflowError, SyntaxError):
             self.tkconsole.resetoutput()
-            tkerr = self.tkconsole.stderr
-            print('*** Error in script or command!\n', file=tkerr)
-            print('Traceback (most recent call last):', file=tkerr)
+            print('*** Error in script or command!\n'
+                 'Traceback (most recent call last):',
+                  file=self.tkconsole.stderr)
             InteractiveInterpreter.showsyntaxerror(self, filename)
             self.tkconsole.showprompt()
         else:
@@ -840,12 +848,9 @@ class PyShell(OutputWindow):
         ("edit", "_Edit"),
         ("debug", "_Debug"),
         ("options", "_Options"),
-        ("windows", "_Windows"),
+        ("windows", "_Window"),
         ("help", "_Help"),
     ]
-
-    if sys.platform == "darwin":
-        menu_specs[-2] = ("windows", "_Window")
 
 
     # New classes
@@ -1462,8 +1467,7 @@ def main():
     try:
         opts, args = getopt.getopt(sys.argv[1:], "c:deihnr:st:")
     except getopt.error as msg:
-        sys.stderr.write("Error: %s\n" % str(msg))
-        sys.stderr.write(usage_msg)
+        print("Error: %s\n%s" % (msg, usage_msg), file=sys.stderr)
         sys.exit(2)
     for o, a in opts:
         if o == '-c':

@@ -89,101 +89,116 @@ def wraps(wrapped,
 ### total_ordering class decorator
 ################################################################################
 
-# The correct way to indicate that a comparison operation doesn't
-# recognise the other type is to return NotImplemented and let the
-# interpreter handle raising TypeError if both operands return
-# NotImplemented from their respective comparison methods
-#
-# This makes the implementation of total_ordering more complicated, since
-# we need to be careful not to trigger infinite recursion when two
-# different types that both use this decorator encounter each other.
-#
-# For example, if a type implements __lt__, it's natural to define
-# __gt__ as something like:
-#
-#    lambda self, other: not self < other and not self == other
-#
-# However, using the operator syntax like that ends up invoking the full
-# type checking machinery again and means we can end up bouncing back and
-# forth between the two operands until we run out of stack space.
-#
-# The solution is to define helper functions that invoke the appropriate
-# magic methods directly, ensuring we only try each operand once, and
-# return NotImplemented immediately if it is returned from the
-# underlying user provided method. Using this scheme, the __gt__ derived
-# from a user provided __lt__ becomes:
-#
-#    lambda self, other: _not_op_and_not_eq(self.__lt__, self, other))
+# The total ordering functions all invoke the root magic method directly
+# rather than using the corresponding operator.  This avoids possible
+# infinite recursion that could occur when the operator dispatch logic
+# detects a NotImplemented result and then calls a reflected method.
 
-def _not_op(op, other):
-    # "not a < b" handles "a >= b"
-    # "not a <= b" handles "a > b"
-    # "not a >= b" handles "a < b"
-    # "not a > b" handles "a <= b"
-    op_result = op(other)
+def _gt_from_lt(self, other):
+    'Return a > b.  Computed by @total_ordering from (not a < b) and (a != b).'
+    op_result = self.__lt__(other)
     if op_result is NotImplemented:
-        return NotImplemented
-    return not op_result
-
-def _op_or_eq(op, self, other):
-    # "a < b or a == b" handles "a <= b"
-    # "a > b or a == b" handles "a >= b"
-    op_result = op(other)
-    if op_result is NotImplemented:
-        return NotImplemented
-    return op_result or self == other
-
-def _not_op_and_not_eq(op, self, other):
-    # "not (a < b or a == b)" handles "a > b"
-    # "not a < b and a != b" is equivalent
-    # "not (a > b or a == b)" handles "a < b"
-    # "not a > b and a != b" is equivalent
-    op_result = op(other)
-    if op_result is NotImplemented:
-        return NotImplemented
+        return op_result
     return not op_result and self != other
 
-def _not_op_or_eq(op, self, other):
-    # "not a <= b or a == b" handles "a >= b"
-    # "not a >= b or a == b" handles "a <= b"
-    op_result = op(other)
+def _le_from_lt(self, other):
+    'Return a <= b.  Computed by @total_ordering from (a < b) or (a == b).'
+    op_result = self.__lt__(other)
+    return op_result or self == other
+
+def _ge_from_lt(self, other):
+    'Return a >= b.  Computed by @total_ordering from (not a < b).'
+    op_result = self.__lt__(other)
     if op_result is NotImplemented:
-        return NotImplemented
+        return op_result
+    return not op_result
+
+def _ge_from_le(self, other):
+    'Return a >= b.  Computed by @total_ordering from (not a <= b) or (a == b).'
+    op_result = self.__le__(other)
+    if op_result is NotImplemented:
+        return op_result
     return not op_result or self == other
 
-def _op_and_not_eq(op, self, other):
-    # "a <= b and not a == b" handles "a < b"
-    # "a >= b and not a == b" handles "a > b"
-    op_result = op(other)
+def _lt_from_le(self, other):
+    'Return a < b.  Computed by @total_ordering from (a <= b) and (a != b).'
+    op_result = self.__le__(other)
     if op_result is NotImplemented:
-        return NotImplemented
+        return op_result
     return op_result and self != other
+
+def _gt_from_le(self, other):
+    'Return a > b.  Computed by @total_ordering from (not a <= b).'
+    op_result = self.__le__(other)
+    if op_result is NotImplemented:
+        return op_result
+    return not op_result
+
+def _lt_from_gt(self, other):
+    'Return a < b.  Computed by @total_ordering from (not a > b) and (a != b).'
+    op_result = self.__gt__(other)
+    if op_result is NotImplemented:
+        return op_result
+    return not op_result and self != other
+
+def _ge_from_gt(self, other):
+    'Return a >= b.  Computed by @total_ordering from (a > b) or (a == b).'
+    op_result = self.__gt__(other)
+    return op_result or self == other
+
+def _le_from_gt(self, other):
+    'Return a <= b.  Computed by @total_ordering from (not a > b).'
+    op_result = self.__gt__(other)
+    if op_result is NotImplemented:
+        return op_result
+    return not op_result
+
+def _le_from_ge(self, other):
+    'Return a <= b.  Computed by @total_ordering from (not a >= b) or (a == b).'
+    op_result = self.__ge__(other)
+    if op_result is NotImplemented:
+        return op_result
+    return not op_result or self == other
+
+def _gt_from_ge(self, other):
+    'Return a > b.  Computed by @total_ordering from (a >= b) and (a != b).'
+    op_result = self.__ge__(other)
+    if op_result is NotImplemented:
+        return op_result
+    return op_result and self != other
+
+def _lt_from_ge(self, other):
+    'Return a < b.  Computed by @total_ordering from (not a >= b).'
+    op_result = self.__ge__(other)
+    if op_result is NotImplemented:
+        return op_result
+    return not op_result
+
+_convert = {
+    '__lt__': [('__gt__', _gt_from_lt),
+               ('__le__', _le_from_lt),
+               ('__ge__', _ge_from_lt)],
+    '__le__': [('__ge__', _ge_from_le),
+               ('__lt__', _lt_from_le),
+               ('__gt__', _gt_from_le)],
+    '__gt__': [('__lt__', _lt_from_gt),
+               ('__ge__', _ge_from_gt),
+               ('__le__', _le_from_gt)],
+    '__ge__': [('__le__', _le_from_ge),
+               ('__gt__', _gt_from_ge),
+               ('__lt__', _lt_from_ge)]
+}
 
 def total_ordering(cls):
     """Class decorator that fills in missing ordering methods"""
-    convert = {
-        '__lt__': [('__gt__', lambda self, other: _not_op_and_not_eq(self.__lt__, self, other)),
-                   ('__le__', lambda self, other: _op_or_eq(self.__lt__, self, other)),
-                   ('__ge__', lambda self, other: _not_op(self.__lt__, other))],
-        '__le__': [('__ge__', lambda self, other: _not_op_or_eq(self.__le__, self, other)),
-                   ('__lt__', lambda self, other: _op_and_not_eq(self.__le__, self, other)),
-                   ('__gt__', lambda self, other: _not_op(self.__le__, other))],
-        '__gt__': [('__lt__', lambda self, other: _not_op_and_not_eq(self.__gt__, self, other)),
-                   ('__ge__', lambda self, other: _op_or_eq(self.__gt__, self, other)),
-                   ('__le__', lambda self, other: _not_op(self.__gt__, other))],
-        '__ge__': [('__le__', lambda self, other: _not_op_or_eq(self.__ge__, self, other)),
-                   ('__gt__', lambda self, other: _op_and_not_eq(self.__ge__, self, other)),
-                   ('__lt__', lambda self, other: _not_op(self.__ge__, other))]
-    }
     # Find user-defined comparisons (not those inherited from object).
-    roots = [op for op in convert if getattr(cls, op, None) is not getattr(object, op, None)]
+    roots = [op for op in _convert if getattr(cls, op, None) is not getattr(object, op, None)]
     if not roots:
         raise ValueError('must define at least one ordering operation: < > <= >=')
     root = max(roots)       # prefer __lt__ to __le__ to __gt__ to __ge__
-    for opname, opfunc in convert[root]:
+    for opname, opfunc in _convert[root]:
         if opname not in roots:
             opfunc.__name__ = opname
-            opfunc.__doc__ = getattr(int, opname).__doc__
             setattr(cls, opname, opfunc)
     return cls
 
@@ -208,8 +223,6 @@ def cmp_to_key(mycmp):
             return mycmp(self.obj, other.obj) <= 0
         def __ge__(self, other):
             return mycmp(self.obj, other.obj) >= 0
-        def __ne__(self, other):
-            return mycmp(self.obj, other.obj) != 0
         __hash__ = None
     return K
 
@@ -228,6 +241,14 @@ def partial(func, *args, **keywords):
     """New function with partial application of the given arguments
     and keywords.
     """
+    if hasattr(func, 'func'):
+        args = func.args + args
+        tmpkw = func.keywords.copy()
+        tmpkw.update(keywords)
+        keywords = tmpkw
+        del tmpkw
+        func = func.func
+
     def newfunc(*fargs, **fkeywords):
         newkeywords = keywords.copy()
         newkeywords.update(fkeywords)
@@ -277,7 +298,7 @@ class partialmethod(object):
                                  for k, v in self.keywords.items())
         format_string = "{module}.{cls}({func}, {args}, {keywords})"
         return format_string.format(module=self.__class__.__module__,
-                                    cls=self.__class__.__name__,
+                                    cls=self.__class__.__qualname__,
                                     func=self.func,
                                     args=args,
                                     keywords=keywords)
@@ -391,6 +412,12 @@ def lru_cache(maxsize=128, typed=False):
     #       cache_info, cache_clear, and f.__wrapped__
     # The internals of the lru_cache are encapsulated for thread safety and
     # to allow the implementation to change (including a possible C version).
+
+    # Early detection of an erroneous call to @lru_cache without any arguments
+    # resulting in the inner function being passed to maxsize instead of an
+    # integer or None.
+    if maxsize is not None and not isinstance(maxsize, int):
+        raise TypeError('Expected maxsize to be an integer or None')
 
     # Constants shared by all lru cache instances:
     sentinel = object()          # unique object used to signal cache misses

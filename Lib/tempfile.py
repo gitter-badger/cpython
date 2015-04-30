@@ -1,10 +1,10 @@
 """Temporary files.
 
 This module provides generic, low- and high-level interfaces for
-creating temporary files and directories.  The interfaces listed
-as "safe" just below can be used without fear of race conditions.
-Those listed as "unsafe" cannot, and are provided for backward
-compatibility only.
+creating temporary files and directories.  All of the interfaces
+provided by this module can be used without fear of race conditions
+except for 'mktemp'.  'mktemp' is subject to race conditions and
+should not be used; it is provided for backward compatibility only.
 
 This module also provides some data items to the user:
 
@@ -357,9 +357,11 @@ class _TemporaryFileCloser:
         def close(self, unlink=_os.unlink):
             if not self.close_called and self.file is not None:
                 self.close_called = True
-                self.file.close()
-                if self.delete:
-                    unlink(self.name)
+                try:
+                    self.file.close()
+                finally:
+                    if self.delete:
+                        unlink(self.name)
 
         # Need to ensure the file is deleted on __del__
         def __del__(self):
@@ -426,7 +428,13 @@ class _TemporaryFileWrapper:
 
     # iter() doesn't use __getattr__ to find the __iter__ method
     def __iter__(self):
-        return iter(self.file)
+        # Don't return iter(self.file), but yield from it to avoid closing
+        # file as long as it's being used as iterator (see issue #23700).  We
+        # can't use 'yield from' here because iter(file) returns the file
+        # object itself, which has a close method, and thus the file would get
+        # closed when the generator is finalized, due to PEP380 semantics.
+        for line in self.file:
+            yield line
 
 
 def NamedTemporaryFile(mode='w+b', buffering=-1, encoding=None,
@@ -473,6 +481,11 @@ if _os.name != 'posix' or _os.sys.platform == 'cygwin':
     TemporaryFile = NamedTemporaryFile
 
 else:
+    # Is the O_TMPFILE flag available and does it work?
+    # The flag is set to False if os.open(dir, os.O_TMPFILE) raises an
+    # IsADirectoryError exception
+    _O_TMPFILE_WORKS = hasattr(_os, 'O_TMPFILE')
+
     def TemporaryFile(mode='w+b', buffering=-1, encoding=None,
                       newline=None, suffix="", prefix=template,
                       dir=None):
@@ -488,11 +501,32 @@ else:
         Returns an object with a file-like interface.  The file has no
         name, and will cease to exist when it is closed.
         """
+        global _O_TMPFILE_WORKS
 
         if dir is None:
             dir = gettempdir()
 
         flags = _bin_openflags
+        if _O_TMPFILE_WORKS:
+            try:
+                flags2 = (flags | _os.O_TMPFILE) & ~_os.O_CREAT
+                fd = _os.open(dir, flags2, 0o600)
+            except IsADirectoryError:
+                # Linux kernel older than 3.11 ignores O_TMPFILE flag.
+                # Set flag to False to not try again.
+                _O_TMPFILE_WORKS = False
+            except OSError:
+                # The filesystem of the directory does not support O_TMPFILE.
+                # For example, OSError(95, 'Operation not supported').
+                pass
+            else:
+                try:
+                    return _io.open(fd, mode, buffering=buffering,
+                                    newline=newline, encoding=encoding)
+                except:
+                    _os.close(fd)
+                    raise
+            # Fallback to _mkstemp_inner().
 
         (fd, name) = _mkstemp_inner(dir, prefix, suffix, flags)
         try:
@@ -518,7 +552,7 @@ class SpooledTemporaryFile:
         else:
             # Setting newline="\n" avoids newline translation;
             # this is important because otherwise on Windows we'd
-            # hget double newline translation upon rollover().
+            # get double newline translation upon rollover().
             self._file = _io.StringIO(newline="\n")
         self._max_size = max_size
         self._rolled = False
@@ -663,11 +697,6 @@ class TemporaryDirectory(object):
     in it are removed.
     """
 
-    # Handle mkdtemp raising an exception
-    name = None
-    _finalizer = None
-    _closed = False
-
     def __init__(self, suffix="", prefix=template, dir=None):
         self.name = mkdtemp(suffix, prefix, dir)
         self._finalizer = _weakref.finalize(
@@ -675,10 +704,9 @@ class TemporaryDirectory(object):
             warn_message="Implicitly cleaning up {!r}".format(self))
 
     @classmethod
-    def _cleanup(cls, name, warn_message=None):
+    def _cleanup(cls, name, warn_message):
         _shutil.rmtree(name)
-        if warn_message is not None:
-            _warnings.warn(warn_message, ResourceWarning)
+        _warnings.warn(warn_message, ResourceWarning)
 
 
     def __repr__(self):
@@ -691,8 +719,5 @@ class TemporaryDirectory(object):
         self.cleanup()
 
     def cleanup(self):
-        if self._finalizer is not None:
-            self._finalizer.detach()
-        if self.name is not None and not self._closed:
+        if self._finalizer.detach():
             _shutil.rmtree(self.name)
-            self._closed = True

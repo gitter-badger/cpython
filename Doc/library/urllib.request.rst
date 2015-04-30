@@ -12,11 +12,16 @@ The :mod:`urllib.request` module defines functions and classes which help in
 opening URLs (mostly HTTP) in a complex world --- basic and digest
 authentication, redirections, cookies and more.
 
+.. seealso::
+
+    The `Requests package <http://requests.readthedocs.org/>`_
+    is recommended for a higher-level http client interface.
+
 
 The :mod:`urllib.request` module defines the following functions:
 
 
-.. function:: urlopen(url, data=None[, timeout], *, cafile=None, capath=None, cadefault=False)
+.. function:: urlopen(url, data=None[, timeout], *, cafile=None, capath=None, cadefault=False, context=None)
 
    Open the URL *url*, which can be either a string or a
    :class:`Request` object.
@@ -47,27 +52,23 @@ The :mod:`urllib.request` module defines the following functions:
    the global default timeout setting will be used).  This actually
    only works for HTTP, HTTPS and FTP connections.
 
+   If *context* is specified, it must be a :class:`ssl.SSLContext` instance
+   describing the various SSL options. See :class:`~http.client.HTTPSConnection`
+   for more details.
+
    The optional *cafile* and *capath* parameters specify a set of trusted
    CA certificates for HTTPS requests.  *cafile* should point to a single
    file containing a bundle of CA certificates, whereas *capath* should
    point to a directory of hashed certificate files.  More information can
    be found in :meth:`ssl.SSLContext.load_verify_locations`.
 
-   The *cadefault* parameter specifies whether to fall back to loading a
-   default certificate store defined by the underlying OpenSSL library if the
-   *cafile* and *capath* parameters are omitted.  This will only work on
-   some non-Windows platforms.
-
-   .. warning::
-      If neither *cafile* nor *capath* is specified, and *cadefault* is ``False``,
-      an HTTPS request will not do any verification of the server's
-      certificate.
+   The *cadefault* parameter is ignored.
 
    For http and https urls, this function returns a
    :class:`http.client.HTTPResponse` object which has the following
    :ref:`httpresponse-objects` methods.
 
-   For ftp, file, and data urls and requests explicity handled by legacy
+   For ftp, file, and data urls and requests explicitly handled by legacy
    :class:`URLopener` and :class:`FancyURLopener` classes, this function
    returns a :class:`urllib.response.addinfourl` object which can work as
    :term:`context manager` and has methods such as
@@ -110,6 +111,10 @@ The :mod:`urllib.request` module defines the following functions:
 
    .. versionchanged:: 3.3
       *cadefault* was added.
+
+   .. versionchanged:: 3.4.3
+      *context* was added.
+
 
 .. function:: install_opener(opener)
 
@@ -283,13 +288,37 @@ The following classes are provided:
    fits.
 
 
+.. class:: HTTPPasswordMgrWithPriorAuth()
+
+   A variant of :class:`HTTPPasswordMgrWithDefaultRealm` that also has a
+   database of ``uri -> is_authenticated`` mappings.  Can be used by a
+   BasicAuth handler to determine when to send authentication credentials
+   immediately instead of waiting for a ``401`` response first.
+
+   .. versionadded:: 3.5
+
+
 .. class:: AbstractBasicAuthHandler(password_mgr=None)
 
    This is a mixin class that helps with HTTP authentication, both to the remote
    host and to a proxy. *password_mgr*, if given, should be something that is
    compatible with :class:`HTTPPasswordMgr`; refer to section
    :ref:`http-password-mgr` for information on the interface that must be
-   supported.
+   supported.  If *passwd_mgr* also provides ``is_authenticated`` and
+   ``update_authenticated`` methods (see
+   :ref:`http-password-mgr-with-prior-auth`), then the handler will use the
+   ``is_authenticated`` result for a given URI to determine whether or not to
+   send authentication credentials with the request.  If ``is_authenticated``
+   returns ``True`` for the URI, credentials are sent.  If ``is_authenticated``
+   is ``False``, credentials are not sent, and then if a ``401`` response is
+   received the request is re-sent with the authentication credentials.  If
+   authentication succeeds, ``update_authenticated`` is called to set
+   ``is_authenticated`` ``True`` for the URI, so that subsequent requests to
+   the URI or any of its super-URIs will automatically include the
+   authentication credentials.
+
+   .. versionadded:: 3.5
+      Added ``is_authenticated`` support.
 
 
 .. class:: HTTPBasicAuthHandler(password_mgr=None)
@@ -841,6 +870,42 @@ These methods are available on :class:`HTTPPasswordMgr` and
    searched if the given *realm* has no matching user/password.
 
 
+.. _http-password-mgr-with-prior-auth:
+
+HTTPPasswordMgrWithPriorAuth Objects
+------------------------------------
+
+This password manager extends :class:`HTTPPasswordMgrWithDefaultRealm` to support
+tracking URIs for which authentication credentials should always be sent.
+
+
+.. method:: HTTPPasswordMgrWithPriorAuth.add_password(realm, uri, user, \
+            passwd, is_authenticated=False)
+
+   *realm*, *uri*, *user*, *passwd* are as for
+   :meth:`HTTPPasswordMgr.add_password`.  *is_authenticated* sets the initial
+   value of the ``is_authenticated`` flag for the given URI or list of URIs.
+   If *is_authenticated* is specified as ``True``, *realm* is ignored.
+
+
+.. method:: HTTPPasswordMgr.find_user_password(realm, authuri)
+
+   Same as for :class:`HTTPPasswordMgrWithDefaultRealm` objects
+
+
+.. method:: HTTPPasswordMgrWithPriorAuth.update_authenticated(self, uri, \
+            is_authenticated=False)
+
+   Update the ``is_authenticated`` flag for the given *uri* or list
+   of URIs.
+
+
+.. method:: HTTPPasswordMgrWithPriorAuth.is_authenticated(self, authuri)
+
+   Returns the current state of the ``is_authenticated`` flag for
+   the given URI.
+
+
 .. _abstract-basic-auth-handler:
 
 AbstractBasicAuthHandler Objects
@@ -1049,8 +1114,9 @@ This example gets the python.org main page and displays the first 300 bytes of
 it. ::
 
    >>> import urllib.request
-   >>> f = urllib.request.urlopen('http://www.python.org/')
-   >>> print(f.read(300))
+   >>> with urllib.request.urlopen('http://www.python.org/') as f:
+   ...     print(f.read(300))
+   ...
    b'<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">\n\n\n<html
    xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">\n\n<head>\n
@@ -1067,7 +1133,7 @@ The following W3C document, http://www.w3.org/International/O-charset\ , lists
 the various ways in which a (X)HTML or a XML document could have specified its
 encoding information.
 
-As the python.org website uses *utf-8* encoding as specified in it's meta tag, we
+As the python.org website uses *utf-8* encoding as specified in its meta tag, we
 will use the same for decoding the bytes object. ::
 
    >>> with urllib.request.urlopen('http://www.python.org/') as f:
@@ -1092,8 +1158,9 @@ when the Python installation supports SSL. ::
    >>> import urllib.request
    >>> req = urllib.request.Request(url='https://localhost/cgi-bin/test.cgi',
    ...                       data=b'This data is passed to stdin of the CGI')
-   >>> f = urllib.request.urlopen(req)
-   >>> print(f.read().decode('utf-8'))
+   >>> with urllib.request.urlopen(req) as f:
+   ...     print(f.read().decode('utf-8'))
+   ...
    Got Data: "This data is passed to stdin of the CGI"
 
 The code for the sample CGI used in the above example is::
@@ -1108,7 +1175,8 @@ Here is an example of doing a ``PUT`` request using :class:`Request`::
     import urllib.request
     DATA=b'some data'
     req = urllib.request.Request(url='http://localhost:8080', data=DATA,method='PUT')
-    f = urllib.request.urlopen(req)
+    with urllib.request.urlopen(req) as f:
+        pass
     print(f.status)
     print(f.reason)
 
@@ -1174,8 +1242,10 @@ containing parameters::
    >>> import urllib.request
    >>> import urllib.parse
    >>> params = urllib.parse.urlencode({'spam': 1, 'eggs': 2, 'bacon': 0})
-   >>> f = urllib.request.urlopen("http://www.musi-cal.com/cgi-bin/query?%s" % params)
-   >>> print(f.read().decode('utf-8'))
+   >>> url = "http://www.musi-cal.com/cgi-bin/query?%s" % params
+   >>> with urllib.request.urlopen(url) as f:
+   ...     print(f.read().decode('utf-8'))
+   ...
 
 The following example uses the ``POST`` method instead. Note that params output
 from urlencode is encoded to bytes before it is sent to urlopen as data::
@@ -1187,8 +1257,9 @@ from urlencode is encoded to bytes before it is sent to urlopen as data::
    >>> request = urllib.request.Request("http://requestb.in/xrbl82xr")
    >>> # adding charset parameter to the Content-Type header.
    >>> request.add_header("Content-Type","application/x-www-form-urlencoded;charset=utf-8")
-   >>> f = urllib.request.urlopen(request, data)
-   >>> print(f.read().decode('utf-8'))
+   >>> with urllib.request.urlopen(request, data) as f:
+   ...     print(f.read().decode('utf-8'))
+   ...
 
 The following example uses an explicitly specified HTTP proxy, overriding
 environment settings::
@@ -1196,15 +1267,17 @@ environment settings::
    >>> import urllib.request
    >>> proxies = {'http': 'http://proxy.example.com:8080/'}
    >>> opener = urllib.request.FancyURLopener(proxies)
-   >>> f = opener.open("http://www.python.org")
-   >>> f.read().decode('utf-8')
+   >>> with opener.open("http://www.python.org") as f:
+   ...     f.read().decode('utf-8')
+   ...
 
 The following example uses no proxies at all, overriding environment settings::
 
    >>> import urllib.request
    >>> opener = urllib.request.FancyURLopener({})
-   >>> f = opener.open("http://www.python.org/")
-   >>> f.read().decode('utf-8')
+   >>> with opener.open("http://www.python.org/") as f:
+   ...     f.read().decode('utf-8')
+   ...
 
 
 Legacy interface

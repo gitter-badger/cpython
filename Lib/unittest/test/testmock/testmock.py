@@ -154,6 +154,24 @@ class MockTest(unittest.TestCase):
         mock = Mock(side_effect=side_effect, return_value=sentinel.RETURN)
         self.assertEqual(mock(), sentinel.RETURN)
 
+    def test_autospec_side_effect(self):
+        # Test for issue17826
+        results = [1, 2, 3]
+        def effect():
+            return results.pop()
+        def f():
+            pass
+
+        mock = create_autospec(f)
+        mock.side_effect = [1, 2, 3]
+        self.assertEqual([mock(), mock(), mock()], [1, 2, 3],
+                          "side effect not used correctly in create_autospec")
+        # Test where side effect is a callable
+        results = [1, 2, 3]
+        mock = create_autospec(f)
+        mock.side_effect = effect
+        self.assertEqual([mock(), mock(), mock()], [3, 2, 1],
+                          "callable side effect not used correctly")
 
     @unittest.skipUnless('java' in sys.platform,
                           'This test only applies to Jython')
@@ -1164,6 +1182,46 @@ class MockTest(unittest.TestCase):
                 func.mock_calls, [call(1, 2), call(3, 4)]
             )
 
+    #Issue21222
+    def test_create_autospec_with_name(self):
+        m = mock.create_autospec(object(), name='sweet_func')
+        self.assertIn('sweet_func', repr(m))
+
+    #Issue21238
+    def test_mock_unsafe(self):
+        m = Mock()
+        with self.assertRaises(AttributeError):
+            m.assert_foo_call()
+        with self.assertRaises(AttributeError):
+            m.assret_foo_call()
+        m = Mock(unsafe=True)
+        m.assert_foo_call()
+        m.assret_foo_call()
+
+    #Issue21262
+    def test_assert_not_called(self):
+        m = Mock()
+        m.hello.assert_not_called()
+        m.hello()
+        with self.assertRaises(AssertionError):
+            m.hello.assert_not_called()
+
+    #Issue21256 printout of keyword args should be in deterministic order
+    def test_sorted_call_signature(self):
+        m = Mock()
+        m.hello(name='hello', daddy='hero')
+        text = "call(daddy='hero', name='hello')"
+        self.assertEqual(repr(m.hello.call_args), text)
+
+    #Issue21270 overrides tuple methods for mock.call objects
+    def test_override_tuple_methods(self):
+        c = call.count()
+        i = call.index(132,'hello')
+        m = Mock()
+        m.count()
+        m.index(132,"hello")
+        self.assertEqual(m.method_calls[0], c)
+        self.assertEqual(m.method_calls[1], i)
 
     def test_mock_add_spec(self):
         class _One(object):

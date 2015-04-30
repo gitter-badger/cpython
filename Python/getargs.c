@@ -849,7 +849,7 @@ convertsimple(PyObject *arg, const char **p_format, va_list *p_va, int flags,
     /* XXX WAAAAH!  's', 'y', 'z', 'u', 'Z', 'e', 'w' codes all
        need to be cleaned up! */
 
-    case 'y': {/* any buffer-like object, but not PyUnicode */
+    case 'y': {/* any bytes-like object */
         void **p = (void **)va_arg(*p_va, char **);
         char *buf;
         Py_ssize_t count;
@@ -872,16 +872,16 @@ convertsimple(PyObject *arg, const char **p_format, va_list *p_va, int flags,
             STORE_SIZE(count);
             format++;
         } else {
-            if (strlen(*p) != count)
-                return converterr(
-                    "bytes without null bytes",
-                    arg, msgbuf, bufsize);
+            if (strlen(*p) != (size_t)count) {
+                PyErr_SetString(PyExc_ValueError, "embedded null byte");
+                RETURN_ERR_OCCURRED;
+            }
         }
         break;
     }
 
-    case 's': /* text string */
-    case 'z': /* text string or None */
+    case 's': /* text string or bytes-like object */
+    case 'z': /* text string, bytes-like object or None */
     {
         if (*format == '*') {
             /* "s*" or "z*" */
@@ -897,7 +897,7 @@ convertsimple(PyObject *arg, const char **p_format, va_list *p_va, int flags,
                                       arg, msgbuf, bufsize);
                 PyBuffer_FillInfo(p, arg, sarg, len, 1, 0);
             }
-            else { /* any buffer-like object */
+            else { /* any bytes-like object */
                 char *buf;
                 if (getbuffer(arg, p, &buf) < 0)
                     return converterr(buf, arg, msgbuf, bufsize);
@@ -908,7 +908,7 @@ convertsimple(PyObject *arg, const char **p_format, va_list *p_va, int flags,
                     arg, msgbuf, bufsize);
             }
             format++;
-        } else if (*format == '#') { /* any buffer-like object */
+        } else if (*format == '#') { /* a string or read-only bytes-like object */
             /* "s#" or "z#" */
             void **p = (void **)va_arg(*p_va, char **);
             FETCH_SIZE;
@@ -926,7 +926,7 @@ convertsimple(PyObject *arg, const char **p_format, va_list *p_va, int flags,
                 *p = sarg;
                 STORE_SIZE(len);
             }
-            else { /* any buffer-like object */
+            else { /* read-only bytes-like object */
                 /* XXX Really? */
                 char *buf;
                 Py_ssize_t count = convertbuffer(arg, p, &buf);
@@ -948,16 +948,15 @@ convertsimple(PyObject *arg, const char **p_format, va_list *p_va, int flags,
                 if (sarg == NULL)
                     return converterr(CONV_UNICODE,
                                       arg, msgbuf, bufsize);
+                if (strlen(sarg) != (size_t)len) {
+                    PyErr_SetString(PyExc_ValueError, "embedded null character");
+                    RETURN_ERR_OCCURRED;
+                }
                 *p = sarg;
             }
             else
                 return converterr(c == 'z' ? "str or None" : "str",
                                   arg, msgbuf, bufsize);
-            if (*p != NULL && sarg != NULL && (Py_ssize_t) strlen(*p) != len)
-                return converterr(
-                    c == 'z' ? "str without null characters or None"
-                             : "str without null characters",
-                    arg, msgbuf, bufsize);
         }
         break;
     }
@@ -967,8 +966,8 @@ convertsimple(PyObject *arg, const char **p_format, va_list *p_va, int flags,
     {
         Py_UNICODE **p = va_arg(*p_va, Py_UNICODE **);
 
-        if (*format == '#') { /* any buffer-like object */
-            /* "s#" or "Z#" */
+        if (*format == '#') {
+            /* "u#" or "Z#" */
             FETCH_SIZE;
 
             if (c == 'Z' && arg == Py_None) {
@@ -983,10 +982,11 @@ convertsimple(PyObject *arg, const char **p_format, va_list *p_va, int flags,
                 STORE_SIZE(len);
             }
             else
-                return converterr("str or None", arg, msgbuf, bufsize);
+                return converterr(c == 'Z' ? "str or None" : "str",
+                                  arg, msgbuf, bufsize);
             format++;
         } else {
-            /* "s" or "Z" */
+            /* "u" or "Z" */
             if (c == 'Z' && arg == Py_None)
                 *p = NULL;
             else if (PyUnicode_Check(arg)) {
@@ -994,10 +994,10 @@ convertsimple(PyObject *arg, const char **p_format, va_list *p_va, int flags,
                 *p = PyUnicode_AsUnicodeAndSize(arg, &len);
                 if (*p == NULL)
                     RETURN_ERR_OCCURRED;
-                if (Py_UNICODE_strlen(*p) != len)
-                    return converterr(
-                        "str without null characters or None",
-                        arg, msgbuf, bufsize);
+                if (Py_UNICODE_strlen(*p) != (size_t)len) {
+                    PyErr_SetString(PyExc_ValueError, "embedded null character");
+                    RETURN_ERR_OCCURRED;
+                }
             } else
                 return converterr(c == 'Z' ? "str or None" : "str",
                                   arg, msgbuf, bufsize);
@@ -1245,7 +1245,8 @@ convertsimple(PyObject *arg, const char **p_format, va_list *p_va, int flags,
            supports it directly. */
         if (PyObject_GetBuffer(arg, (Py_buffer*)p, PyBUF_WRITABLE) < 0) {
             PyErr_Clear();
-            return converterr("read-write buffer", arg, msgbuf, bufsize);
+            return converterr("read-write bytes-like object",
+                              arg, msgbuf, bufsize);
         }
         if (!PyBuffer_IsContiguous((Py_buffer*)p, 'C')) {
             PyBuffer_Release((Py_buffer*)p);
@@ -1283,7 +1284,7 @@ convertbuffer(PyObject *arg, void **p, char **errmsg)
     *errmsg = NULL;
     *p = NULL;
     if (pb != NULL && pb->bf_releasebuffer != NULL) {
-        *errmsg = "read-only pinned buffer";
+        *errmsg = "read-only bytes-like object";
         return -1;
     }
 
@@ -1299,7 +1300,7 @@ static int
 getbuffer(PyObject *arg, Py_buffer *view, char **errmsg)
 {
     if (PyObject_GetBuffer(arg, view, PyBUF_SIMPLE) != 0) {
-        *errmsg = "bytes or buffer";
+        *errmsg = "bytes-like object";
         return -1;
     }
     if (!PyBuffer_IsContiguous(view, 'C')) {

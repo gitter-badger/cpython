@@ -865,8 +865,8 @@ and :ref:`doctest-simple-testfile`.
    nothing at the end.  In verbose mode, the summary is detailed, else the summary
    is very brief (in fact, empty if all tests passed).
 
-   Optional argument *optionflags* or's together option flags.  See section
-   :ref:`doctest-options`.
+   Optional argument *optionflags* (default value 0) takes the bitwise-or of
+   option flags.  See section :ref:`doctest-options`.
 
    Optional argument *raise_on_error* defaults to false.  If true, an exception is
    raised upon the first failure or unexpected exception in an example.  This
@@ -1058,15 +1058,9 @@ from text files and modules with doctests:
 
    This function uses the same search technique as :func:`testmod`.
 
-   .. note::
-      Unlike :func:`testmod` and :class:`DocTestFinder`, this function raises
-      a :exc:`ValueError` if *module* contains no docstrings.  You can prevent
-      this error by passing a :class:`DocTestFinder` instance as the
-      *test_finder* argument with its *exclude_empty* keyword argument set
-      to ``False``::
-
-         >>> finder = doctest.DocTestFinder(exclude_empty=False)
-         >>> suite = doctest.DocTestSuite(test_finder=finder)
+   .. versionchanged:: 3.5
+      :func:`DocTestSuite` returns an empty :class:`unittest.TestSuite` if *module*
+      contains no docstrings instead of raising :exc:`ValueError`.
 
 
 Under the covers, :func:`DocTestSuite` creates a :class:`unittest.TestSuite` out
@@ -1097,7 +1091,7 @@ reporting flags specific to :mod:`unittest` support, via this function:
 
    Set the :mod:`doctest` reporting flags to use.
 
-   Argument *flags* or's together option flags.  See section
+   Argument *flags* takes the bitwise-or of option flags.  See section
    :ref:`doctest-options`.  Only "reporting flags" can be used.
 
    This is a module-global setting, and affects all future doctests run by module

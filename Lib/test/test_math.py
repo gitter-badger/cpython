@@ -422,9 +422,17 @@ class MathTests(unittest.TestCase):
             self.assertEqual(math.factorial(i), py_factorial(i))
         self.assertRaises(ValueError, math.factorial, -1)
         self.assertRaises(ValueError, math.factorial, -1.0)
+        self.assertRaises(ValueError, math.factorial, -10**100)
+        self.assertRaises(ValueError, math.factorial, -1e100)
         self.assertRaises(ValueError, math.factorial, math.pi)
-        self.assertRaises(OverflowError, math.factorial, sys.maxsize+1)
-        self.assertRaises(OverflowError, math.factorial, 10e100)
+
+    # Other implementations may place different upper bounds.
+    @support.cpython_only
+    def testFactorialHugeInputs(self):
+        # Currently raises ValueError for inputs that are too large
+        # to fit into a C long.
+        self.assertRaises(OverflowError, math.factorial, 10**100)
+        self.assertRaises(OverflowError, math.factorial, 1e100)
 
     def testFloor(self):
         self.assertRaises(TypeError, math.floor)
@@ -974,6 +982,17 @@ class MathTests(unittest.TestCase):
         self.assertFalse(math.isinf(float("nan")))
         self.assertFalse(math.isinf(0.))
         self.assertFalse(math.isinf(1.))
+
+    @requires_IEEE_754
+    def test_nan_constant(self):
+        self.assertTrue(math.isnan(math.nan))
+
+    @requires_IEEE_754
+    def test_inf_constant(self):
+        self.assertTrue(math.isinf(math.inf))
+        self.assertGreater(math.inf, 0.0)
+        self.assertEqual(math.inf, float("inf"))
+        self.assertEqual(-math.inf, float("-inf"))
 
     # RED_FLAG 16-Oct-2000 Tim
     # While 2.0 is more consistent about exceptions than previous releases, it

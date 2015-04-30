@@ -21,13 +21,10 @@ PORT = 0
 SUPPORTS_SSL = False
 if hasattr(poplib, 'POP3_SSL'):
     import ssl
-    from ssl import HAS_SNI
 
     SUPPORTS_SSL = True
     CERTFILE = os.path.join(os.path.dirname(__file__) or os.curdir, "keycert3.pem")
     CAFILE = os.path.join(os.path.dirname(__file__) or os.curdir, "pycacert.pem")
-else:
-    HAS_SNI = False
 
 requires_ssl = skipUnless(SUPPORTS_SSL, 'SSL not supported')
 
@@ -334,7 +331,6 @@ class TestPOP3Class(TestCase):
         self.assertEqual(resp, expected)
 
     @requires_ssl
-    @skipUnless(HAS_SNI, 'No SNI support in ssl module')
     def test_stls_context(self):
         expected = b'+OK Begin TLS negotiation'
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
@@ -349,23 +345,18 @@ class TestPOP3Class(TestCase):
 
 
 if SUPPORTS_SSL:
+    from test.test_ftplib import SSLConnection
 
-    class DummyPOP3_SSLHandler(DummyPOP3Handler):
+    class DummyPOP3_SSLHandler(SSLConnection, DummyPOP3Handler):
 
         def __init__(self, conn):
             asynchat.async_chat.__init__(self, conn)
-            ssl_socket = ssl.wrap_socket(self.socket, certfile=CERTFILE,
-                                          server_side=True,
-                                          do_handshake_on_connect=False)
-            self.del_channel()
-            self.set_socket(ssl_socket)
-            # Must try handshake before calling push()
-            self.tls_active = True
-            self.tls_starting = True
-            self._do_tls_handshake()
+            self.secure_connection()
             self.set_terminator(b"\r\n")
             self.in_buffer = []
             self.push('+OK dummy pop3 server ready. <timestamp>')
+            self.tls_active = True
+            self.tls_starting = False
 
 
 @requires_ssl
@@ -456,7 +447,7 @@ class TestTimeouts(TestCase):
         del self.thread  # Clear out any dangling Thread objects.
 
     def server(self, evt, serv):
-        serv.listen(5)
+        serv.listen()
         evt.set()
         try:
             conn, addr = serv.accept()

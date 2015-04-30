@@ -599,8 +599,6 @@ class LongTest(unittest.TestCase):
                 return (x > y) - (x < y)
             def __eq__(self, other):
                 return self._cmp__(other) == 0
-            def __ne__(self, other):
-                return self._cmp__(other) != 0
             def __ge__(self, other):
                 return self._cmp__(other) >= 0
             def __gt__(self, other):
@@ -1235,9 +1233,13 @@ class LongTest(unittest.TestCase):
         for n in map(int, integers):
             self.assertEqual(n, 0)
 
+    def test_shift_bool(self):
+        # Issue #21422: ensure that bool << int and bool >> int return int
+        for value in (True, False):
+            for shift in (0, 2):
+                self.assertEqual(type(value << shift), int)
+                self.assertEqual(type(value >> shift), int)
 
-def test_main():
-    support.run_unittest(LongTest)
 
 if __name__ == "__main__":
-    test_main()
+    unittest.main()

@@ -144,7 +144,7 @@ class WeakValueDictionary(collections.MutableMapping):
         return o is not None
 
     def __repr__(self):
-        return "<WeakValueDictionary at %s>" % id(self)
+        return "<%s at %#x>" % (self.__class__.__name__, id(self))
 
     def __setitem__(self, key, value):
         if self._pending_removals:
@@ -322,6 +322,7 @@ class WeakKeyDictionary(collections.MutableMapping):
         # A list of dead weakrefs (keys to be removed)
         self._pending_removals = []
         self._iterating = set()
+        self._dirty_len = False
         if dict is not None:
             self.update(dict)
 
@@ -338,17 +339,27 @@ class WeakKeyDictionary(collections.MutableMapping):
             except KeyError:
                 pass
 
+    def _scrub_removals(self):
+        d = self.data
+        self._pending_removals = [k for k in self._pending_removals if k in d]
+        self._dirty_len = False
+
     def __delitem__(self, key):
+        self._dirty_len = True
         del self.data[ref(key)]
 
     def __getitem__(self, key):
         return self.data[ref(key)]
 
     def __len__(self):
+        if self._dirty_len and self._pending_removals:
+            # self._pending_removals may still contain keys which were
+            # explicitly removed, we have to scrub them (see issue #21173).
+            self._scrub_removals()
         return len(self.data) - len(self._pending_removals)
 
     def __repr__(self):
-        return "<WeakKeyDictionary at %s>" % id(self)
+        return "<%s at %#x>" % (self.__class__.__name__, id(self))
 
     def __setitem__(self, key, value):
         self.data[ref(key, self._remove)] = value
@@ -417,6 +428,7 @@ class WeakKeyDictionary(collections.MutableMapping):
         return list(self.data)
 
     def popitem(self):
+        self._dirty_len = True
         while True:
             key, value = self.data.popitem()
             o = key()
@@ -424,6 +436,7 @@ class WeakKeyDictionary(collections.MutableMapping):
                 return o, value
 
     def pop(self, key, *args):
+        self._dirty_len = True
         return self.data.pop(ref(key), *args)
 
     def setdefault(self, key, default=None):

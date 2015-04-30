@@ -1,7 +1,9 @@
 """Tests for streams.py."""
 
 import gc
+import os
 import socket
+import sys
 import unittest
 from unittest import mock
 try:
@@ -13,13 +15,13 @@ import asyncio
 from asyncio import test_utils
 
 
-class StreamReaderTests(unittest.TestCase):
+class StreamReaderTests(test_utils.TestCase):
 
     DATA = b'line1\nline2\nline3\n'
 
     def setUp(self):
         self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(None)
+        self.set_event_loop(self.loop)
 
     def tearDown(self):
         # just in case if we have transport close callbacks
@@ -27,6 +29,7 @@ class StreamReaderTests(unittest.TestCase):
 
         self.loop.close()
         gc.collect()
+        super().tearDown()
 
     @mock.patch('asyncio.streams.events')
     def test_ctor_global_loop(self, m_events):
@@ -412,10 +415,6 @@ class StreamReaderTests(unittest.TestCase):
         def set_err():
             stream.set_exception(ValueError())
 
-        @asyncio.coroutine
-        def readline():
-            yield from stream.readline()
-
         t1 = asyncio.Task(stream.readline(), loop=self.loop)
         t2 = asyncio.Task(set_err(), loop=self.loop)
 
@@ -426,11 +425,7 @@ class StreamReaderTests(unittest.TestCase):
     def test_exception_cancel(self):
         stream = asyncio.StreamReader(loop=self.loop)
 
-        @asyncio.coroutine
-        def read_a_line():
-            yield from stream.readline()
-
-        t = asyncio.Task(read_a_line(), loop=self.loop)
+        t = asyncio.Task(stream.readline(), loop=self.loop)
         test_utils.run_briefly(self.loop)
         t.cancel()
         test_utils.run_briefly(self.loop)
@@ -582,6 +577,64 @@ class StreamReaderTests(unittest.TestCase):
                                                             loop=self.loop))
             server.stop()
             self.assertEqual(msg, b"hello world!\n")
+
+    @unittest.skipIf(sys.platform == 'win32', "Don't have pipes")
+    def test_read_all_from_pipe_reader(self):
+        # See Tulip issue 168.  This test is derived from the example
+        # subprocess_attach_read_pipe.py, but we configure the
+        # StreamReader's limit so that twice it is less than the size
+        # of the data writter.  Also we must explicitly attach a child
+        # watcher to the event loop.
+
+        code = """\
+import os, sys
+fd = int(sys.argv[1])
+os.write(fd, b'data')
+os.close(fd)
+"""
+        rfd, wfd = os.pipe()
+        args = [sys.executable, '-c', code, str(wfd)]
+
+        pipe = open(rfd, 'rb', 0)
+        reader = asyncio.StreamReader(loop=self.loop, limit=1)
+        protocol = asyncio.StreamReaderProtocol(reader, loop=self.loop)
+        transport, _ = self.loop.run_until_complete(
+            self.loop.connect_read_pipe(lambda: protocol, pipe))
+
+        watcher = asyncio.SafeChildWatcher()
+        watcher.attach_loop(self.loop)
+        try:
+            asyncio.set_child_watcher(watcher)
+            create = asyncio.create_subprocess_exec(*args,
+                                                    pass_fds={wfd},
+                                                    loop=self.loop)
+            proc = self.loop.run_until_complete(create)
+            self.loop.run_until_complete(proc.wait())
+        finally:
+            asyncio.set_child_watcher(None)
+
+        os.close(wfd)
+        data = self.loop.run_until_complete(reader.read(-1))
+        self.assertEqual(data, b'data')
+
+    def test_streamreader_constructor(self):
+        self.addCleanup(asyncio.set_event_loop, None)
+        asyncio.set_event_loop(self.loop)
+
+        # Tulip issue #184: Ensure that StreamReaderProtocol constructor
+        # retrieves the current loop if the loop parameter is not set
+        reader = asyncio.StreamReader()
+        self.assertIs(reader._loop, self.loop)
+
+    def test_streamreaderprotocol_constructor(self):
+        self.addCleanup(asyncio.set_event_loop, None)
+        asyncio.set_event_loop(self.loop)
+
+        # Tulip issue #184: Ensure that StreamReaderProtocol constructor
+        # retrieves the current loop if the loop parameter is not set
+        reader = mock.Mock()
+        protocol = asyncio.StreamReaderProtocol(reader)
+        self.assertIs(protocol._loop, self.loop)
 
 
 if __name__ == '__main__':

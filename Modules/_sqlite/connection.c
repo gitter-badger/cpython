@@ -522,19 +522,20 @@ _pysqlite_set_result(sqlite3_context* context, PyObject* py_val)
             return -1;
         sqlite3_result_text(context, str, -1, SQLITE_TRANSIENT);
     } else if (PyObject_CheckBuffer(py_val)) {
-        const char* buffer;
-        Py_ssize_t buflen;
-        if (PyObject_AsCharBuffer(py_val, &buffer, &buflen) != 0) {
+        Py_buffer view;
+        if (PyObject_GetBuffer(py_val, &view, PyBUF_SIMPLE) != 0) {
             PyErr_SetString(PyExc_ValueError,
                             "could not convert BLOB to buffer");
             return -1;
         }
-        if (buflen > INT_MAX) {
+        if (view.len > INT_MAX) {
             PyErr_SetString(PyExc_OverflowError,
                             "BLOB longer than INT_MAX bytes");
+            PyBuffer_Release(&view);
             return -1;
         }
-        sqlite3_result_blob(context, buffer, (int)buflen, SQLITE_TRANSIENT);
+        sqlite3_result_blob(context, view.buf, (int)view.len, SQLITE_TRANSIENT);
+        PyBuffer_Release(&view);
     } else {
         return -1;
     }
@@ -1261,7 +1262,8 @@ PyObject* pysqlite_connection_call(pysqlite_Connection* self, PyObject* args, Py
         if (rc == PYSQLITE_TOO_MUCH_SQL) {
             PyErr_SetString(pysqlite_Warning, "You can only execute one statement at a time.");
         } else if (rc == PYSQLITE_SQL_WRONG_TYPE) {
-            PyErr_SetString(pysqlite_Warning, "SQL is of wrong type. Must be string or unicode.");
+            if (PyErr_ExceptionMatches(PyExc_TypeError))
+                PyErr_SetString(pysqlite_Warning, "SQL is of wrong type. Must be string.");
         } else {
             (void)pysqlite_statement_reset(statement);
             _pysqlite_seterror(self->db, NULL);

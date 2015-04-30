@@ -194,10 +194,6 @@ class Rat(object):
             return float(self) == other
         return NotImplemented
 
-    def __ne__(self, other):
-        """Compare two Rats for inequality."""
-        return not self == other
-
 class RatTestCase(unittest.TestCase):
     """Unit tests for Rat class and its support utilities."""
 
@@ -373,8 +369,5 @@ class OperationOrderTests(unittest.TestCase):
         self.assertEqual(op_sequence(le, B, C), ['C.__ge__', 'B.__le__'])
         self.assertEqual(op_sequence(le, C, B), ['C.__le__', 'B.__ge__'])
 
-def test_main():
-    support.run_unittest(RatTestCase, OperationOrderTests)
-
 if __name__ == "__main__":
-    test_main()
+    unittest.main()

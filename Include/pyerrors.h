@@ -99,6 +99,7 @@ PyAPI_FUNC(void) PyErr_SetExcInfo(PyObject *, PyObject *, PyObject *);
 #define _Py_NO_RETURN
 #endif
 
+/* Defined in Python/pylifecycle.c */
 PyAPI_FUNC(void) Py_FatalError(const char *message) _Py_NO_RETURN;
 
 #if defined(Py_DEBUG) || defined(Py_LIMITED_API)
@@ -123,7 +124,9 @@ PyAPI_FUNC(void) PyException_SetCause(PyObject *, PyObject *);
 /* Context manipulation (PEP 3134) */
 PyAPI_FUNC(PyObject *) PyException_GetContext(PyObject *);
 PyAPI_FUNC(void) PyException_SetContext(PyObject *, PyObject *);
-
+#ifndef Py_LIMITED_API
+PyAPI_FUNC(void) _PyErr_ChainExceptions(PyObject *, PyObject *, PyObject *);
+#endif
 
 /* */
 
@@ -242,6 +245,12 @@ PyAPI_FUNC(PyObject *) PyErr_Format(
     const char *format,   /* ASCII-encoded string  */
     ...
     );
+#if !defined(Py_LIMITED_API) || Py_LIMITED_API+0 >= 0x03050000
+PyAPI_FUNC(PyObject *) PyErr_FormatV(
+    PyObject *exception,
+    const char *format,
+    va_list vargs);
+#endif
 
 #ifdef MS_WINDOWS
 PyAPI_FUNC(PyObject *) PyErr_SetFromWindowsErrWithFilename(

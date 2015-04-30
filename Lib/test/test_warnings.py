@@ -5,7 +5,7 @@ from io import StringIO
 import sys
 import unittest
 from test import support
-from test.script_helper import assert_python_ok
+from test.script_helper import assert_python_ok, assert_python_failure
 
 from test import warning_tests
 
@@ -61,6 +61,25 @@ class BaseTest:
         sys.modules['warnings'] = original_warnings
         super(BaseTest, self).tearDown()
 
+class PublicAPITests(BaseTest):
+
+    """Ensures that the correct values are exposed in the
+    public API.
+    """
+
+    def test_module_all_attribute(self):
+        self.assertTrue(hasattr(self.module, '__all__'))
+        target_api = ["warn", "warn_explicit", "showwarning",
+                      "formatwarning", "filterwarnings", "simplefilter",
+                      "resetwarnings", "catch_warnings"]
+        self.assertSetEqual(set(self.module.__all__),
+                            set(target_api))
+
+class CPublicAPITests(PublicAPITests, unittest.TestCase):
+    module = c_warnings
+
+class PyPublicAPITests(PublicAPITests, unittest.TestCase):
+    module = py_warnings
 
 class FilterTests(BaseTest):
 
@@ -73,6 +92,16 @@ class FilterTests(BaseTest):
             self.assertRaises(UserWarning, self.module.warn,
                                 "FilterTests.test_error")
 
+    def test_error_after_default(self):
+        with original_warnings.catch_warnings(module=self.module) as w:
+            self.module.resetwarnings()
+            message = "FilterTests.test_ignore_after_default"
+            def f():
+                self.module.warn(message, UserWarning)
+            f()
+            self.module.filterwarnings("error", category=UserWarning)
+            self.assertRaises(UserWarning, f)
+
     def test_ignore(self):
         with original_warnings.catch_warnings(record=True,
                 module=self.module) as w:
@@ -80,6 +109,19 @@ class FilterTests(BaseTest):
             self.module.filterwarnings("ignore", category=UserWarning)
             self.module.warn("FilterTests.test_ignore", UserWarning)
             self.assertEqual(len(w), 0)
+
+    def test_ignore_after_default(self):
+        with original_warnings.catch_warnings(record=True,
+                module=self.module) as w:
+            self.module.resetwarnings()
+            message = "FilterTests.test_ignore_after_default"
+            def f():
+                self.module.warn(message, UserWarning)
+            f()
+            self.module.filterwarnings("ignore", category=UserWarning)
+            f()
+            f()
+            self.assertEqual(len(w), 1)
 
     def test_always(self):
         with original_warnings.catch_warnings(record=True,
@@ -91,6 +133,26 @@ class FilterTests(BaseTest):
             self.assertTrue(message, w[-1].message)
             self.module.warn(message, UserWarning)
             self.assertTrue(w[-1].message, message)
+
+    def test_always_after_default(self):
+        with original_warnings.catch_warnings(record=True,
+                module=self.module) as w:
+            self.module.resetwarnings()
+            message = "FilterTests.test_always_after_ignore"
+            def f():
+                self.module.warn(message, UserWarning)
+            f()
+            self.assertEqual(len(w), 1)
+            self.assertEqual(w[-1].message.args[0], message)
+            f()
+            self.assertEqual(len(w), 1)
+            self.module.filterwarnings("always", category=UserWarning)
+            f()
+            self.assertEqual(len(w), 2)
+            self.assertEqual(w[-1].message.args[0], message)
+            f()
+            self.assertEqual(len(w), 3)
+            self.assertEqual(w[-1].message.args[0], message)
 
     def test_default(self):
         with original_warnings.catch_warnings(record=True,
@@ -370,6 +432,44 @@ class WarnTests(BaseTest):
         with self.assertRaises(ValueError):
             self.module.warn(BadStrWarning())
 
+    def test_warning_classes(self):
+        class MyWarningClass(Warning):
+            pass
+
+        class NonWarningSubclass:
+            pass
+
+        # passing a non-subclass of Warning should raise a TypeError
+        with self.assertRaises(TypeError) as cm:
+            self.module.warn('bad warning category', '')
+        self.assertIn('category must be a Warning subclass, not ',
+                      str(cm.exception))
+
+        with self.assertRaises(TypeError) as cm:
+            self.module.warn('bad warning category', NonWarningSubclass)
+        self.assertIn('category must be a Warning subclass, not ',
+                      str(cm.exception))
+
+        # check that warning instances also raise a TypeError
+        with self.assertRaises(TypeError) as cm:
+            self.module.warn('bad warning category', MyWarningClass())
+        self.assertIn('category must be a Warning subclass, not ',
+                      str(cm.exception))
+
+        with original_warnings.catch_warnings(module=self.module):
+            self.module.resetwarnings()
+            self.module.filterwarnings('default')
+            with self.assertWarns(MyWarningClass) as cm:
+                self.module.warn('good warning category', MyWarningClass)
+            self.assertEqual('good warning category', str(cm.warning))
+
+            with self.assertWarns(UserWarning) as cm:
+                self.module.warn('good warning category', None)
+            self.assertEqual('good warning category', str(cm.warning))
+
+            with self.assertWarns(MyWarningClass) as cm:
+                self.module.warn('good warning category', MyWarningClass)
+            self.assertIsInstance(cm.warning, Warning)
 
 class CWarnTests(WarnTests, unittest.TestCase):
     module = c_warnings
@@ -487,7 +587,9 @@ class _WarningsTests(BaseTest, unittest.TestCase):
                                             registry=registry)
                 self.assertEqual(w[-1].message, message)
                 self.assertEqual(len(w), 1)
-                self.assertEqual(len(registry), 1)
+                # One actual registry key plus the "version" key
+                self.assertEqual(len(registry), 2)
+                self.assertIn("version", registry)
                 del w[:]
                 # Test removal.
                 del self.module.defaultaction
@@ -497,7 +599,7 @@ class _WarningsTests(BaseTest, unittest.TestCase):
                                             registry=registry)
                 self.assertEqual(w[-1].message, message)
                 self.assertEqual(len(w), 1)
-                self.assertEqual(len(registry), 1)
+                self.assertEqual(len(registry), 2)
                 del w[:]
                 # Test setting.
                 self.module.defaultaction = "ignore"
@@ -566,6 +668,15 @@ class _WarningsTests(BaseTest, unittest.TestCase):
                 self.assertTrue(len(w))
         finally:
             globals_dict['__file__'] = oldfile
+
+    def test_stderr_none(self):
+        rc, stdout, stderr = assert_python_ok("-c",
+            "import sys; sys.stderr = None; "
+            "import warnings; warnings.simplefilter('always'); "
+            "warnings.warn('Warning!')")
+        self.assertEqual(stdout, b'')
+        self.assertNotIn(b'Warning!', stderr)
+        self.assertNotIn(b'Error', stderr)
 
 
 class WarningsDisplayTests(BaseTest):
@@ -748,7 +859,19 @@ class EnvironmentVariableTests(BaseTest):
             "import sys; sys.stdout.write(str(sys.warnoptions))",
             PYTHONWARNINGS="ignore::DeprecationWarning")
         self.assertEqual(stdout,
-            b"['ignore::UnicodeWarning', 'ignore::DeprecationWarning']")
+            b"['ignore::DeprecationWarning', 'ignore::UnicodeWarning']")
+
+    def test_conflicting_envvar_and_command_line(self):
+        rc, stdout, stderr = assert_python_failure("-Werror::DeprecationWarning", "-c",
+            "import sys, warnings; sys.stdout.write(str(sys.warnoptions)); "
+            "warnings.warn('Message', DeprecationWarning)",
+            PYTHONWARNINGS="default::DeprecationWarning")
+        self.assertEqual(stdout,
+            b"['default::DeprecationWarning', 'error::DeprecationWarning']")
+        self.assertEqual(stderr.splitlines(),
+            [b"Traceback (most recent call last):",
+             b"  File \"<string>\", line 1, in <module>",
+             b"DeprecationWarning: Message"])
 
     @unittest.skipUnless(sys.getfilesystemencoding() != 'ascii',
                          'requires non-ascii filesystemencoding')

@@ -31,11 +31,11 @@ that name established in the innermost function block containing the use.
 A :dfn:`block` is a piece of Python program text that is executed as a unit.
 The following are blocks: a module, a function body, and a class definition.
 Each command typed interactively is a block.  A script file (a file given as
-standard input to the interpreter or specified on the interpreter command line
-the first argument) is a code block.  A script command (a command specified on
-the interpreter command line with the '**-c**' option) is a code block.  The
-string argument passed to the built-in functions :func:`eval` and :func:`exec`
-is a code block.
+standard input to the interpreter or specified as a command line argument to the
+interpreter) is a code block.  A script command (a command specified on the
+interpreter command line with the '**-c**' option) is a code block.  The string
+argument passed to the built-in functions :func:`eval` and :func:`exec` is a
+code block.
 
 .. index:: pair: execution; frame
 
@@ -77,7 +77,7 @@ global.)  If a variable is used in a code block but not defined there, it is a
    single: UnboundLocalError
 
 When a name is not found at all, a :exc:`NameError` exception is raised.  If the
-name refers to a local variable that has not been bound, a
+name refers to a local variable that has not been bound, an
 :exc:`UnboundLocalError` exception is raised.  :exc:`UnboundLocalError` is a
 subclass of :exc:`NameError`.
 
@@ -111,8 +111,9 @@ specified in the statement refer to the binding of that name in the top-level
 namespace.  Names are resolved in the top-level namespace by searching the
 global namespace, i.e. the namespace of the module containing the code block,
 and the builtins namespace, the namespace of the module :mod:`builtins`.  The
-global namespace is searched first.  If the name is not found there, the builtins
-namespace is searched.  The global statement must precede all uses of the name.
+global namespace is searched first.  If the name is not found there, the
+builtins namespace is searched.  The :keyword:`global` statement must precede
+all uses of the name.
 
 .. XXX document "nonlocal" semantics here
 
@@ -159,10 +160,6 @@ conjunction with nested scopes that contain free variables.
 
 If a variable is referenced in an enclosing scope, it is illegal to delete the
 name.  An error will be reported at compile time.
-
-If the wild card form of import --- ``import *`` --- is used in a function and
-the function contains or is a nested block with free variables, the compiler
-will raise a :exc:`SyntaxError`.
 
 .. XXX from * also invalid with relative imports (at least currently)
 

@@ -221,7 +221,7 @@ find_key(int set_value, int key, void *value)
             goto Done;
         }
         /* Sanity check.  These states should never happen but if
-         * they do we must abort.  Otherwise we'll end up spinning in
+         * they do we must abort.  Otherwise we'll end up spinning
          * in a tight loop with the lock held.  A similar check is done
          * in pystate.c tstate_delete_common().  */
         if (p == prev_p)
@@ -431,7 +431,7 @@ PyThread_GetInfo(void)
      && defined(_CS_GNU_LIBPTHREAD_VERSION))
     value = NULL;
     len = confstr(_CS_GNU_LIBPTHREAD_VERSION, buffer, sizeof(buffer));
-    if (1 < len && len < sizeof(buffer)) {
+    if (1 < len && (size_t)len < sizeof(buffer)) {
         value = PyUnicode_DecodeFSDefaultAndSize(buffer, len-1);
         if (value == NULL)
             PyErr_Clear();

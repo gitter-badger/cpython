@@ -23,15 +23,14 @@ for pdb as an example.
 
 The IDLE interactive development environment, which is part of the standard
 Python distribution (normally available as Tools/scripts/idle), includes a
-graphical debugger.  There is documentation for the IDLE debugger at
-http://www.python.org/idle/doc/idle2.html#Debugger.
+graphical debugger.
 
 PythonWin is a Python IDE that includes a GUI debugger based on pdb.  The
 Pythonwin debugger colors breakpoints and has quite a few cool features such as
 debugging non-Pythonwin programs.  Pythonwin is available as part of the `Python
 for Windows Extensions <http://sourceforge.net/projects/pywin32/>`__ project and
 as a part of the ActivePython distribution (see
-http://www.activestate.com/Products/ActivePython/index.html).
+http://www.activestate.com/activepython\ ).
 
 `Boa Constructor <http://boa-constructor.sourceforge.net/>`_ is an IDE and GUI
 builder that uses wxWidgets.  It offers visual frame creation and manipulation,
@@ -39,7 +38,7 @@ an object inspector, many views on the source like object browsers, inheritance
 hierarchies, doc string generated html documentation, an advanced debugger,
 integrated help, and Zope support.
 
-`Eric <http://www.die-offenbachs.de/eric/index.html>`_ is an IDE built on PyQt
+`Eric <http://eric-ide.python-projects.org/>`_ is an IDE built on PyQt
 and the Scintilla editing component.
 
 Pydb is a version of the standard Python debugger pdb, modified for use with DDD
@@ -51,7 +50,8 @@ There are a number of commercial Python IDEs that include graphical debuggers.
 They include:
 
 * Wing IDE (http://wingware.com/)
-* Komodo IDE (http://www.activestate.com/Products/Komodo)
+* Komodo IDE (http://komodoide.com/)
+* PyCharm (https://www.jetbrains.com/pycharm/)
 
 
 Is there a tool to help find bugs or perform static analysis?
@@ -61,7 +61,7 @@ Yes.
 
 PyChecker is a static analysis tool that finds bugs in Python source code and
 warns about code complexity and style.  You can get PyChecker from
-http://pychecker.sf.net.
+http://pychecker.sourceforge.net/.
 
 `Pylint <http://www.logilab.org/projects/pylint>`_ is another tool that checks
 if a module satisfies a coding standard, and also makes it possible to write
@@ -69,8 +69,7 @@ plug-ins to add a custom feature.  In addition to the bug checking that
 PyChecker performs, Pylint offers some additional features such as checking line
 length, whether variable names are well-formed according to your coding
 standard, whether declared interfaces are fully implemented, and more.
-http://www.logilab.org/card/pylint_manual provides a full list of Pylint's
-features.
+http://docs.pylint.org/ provides a full list of Pylint's features.
 
 
 How can I create a stand-alone binary from a Python script?
@@ -101,13 +100,7 @@ which don't. One is Thomas Heller's py2exe (Windows only) at
 
     http://www.py2exe.org/
 
-Another is Christian Tismer's `SQFREEZE <http://starship.python.net/crew/pirx>`_
-which appends the byte code to a specially-prepared Python interpreter that can
-find the byte code in the executable.
-
-Other tools include Fredrik Lundh's `Squeeze
-<http://www.pythonware.com/products/python/squeeze>`_ and Anthony Tuininga's
-`cx_Freeze <http://starship.python.net/crew/atuining/cx_Freeze/index.html>`_.
+Another tool is Anthony Tuininga's `cx_Freeze <http://cx-freeze.sourceforge.net/>`_.
 
 
 Are there coding standards or a style guide for Python programs?
@@ -292,9 +285,8 @@ What are the "best practices" for using import in a module?
 -----------------------------------------------------------
 
 In general, don't use ``from modulename import *``.  Doing so clutters the
-importer's namespace.  Some people avoid this idiom even with the few modules
-that were designed to be imported in this manner.  Modules designed in this
-manner include :mod:`tkinter`, and :mod:`threading`.
+importer's namespace, and makes it much harder for linters to detect undefined
+names.
 
 Import modules at the top of a file.  Doing so makes it clear what other modules
 your code requires and avoids questions of whether the module name is in scope.
@@ -307,11 +299,6 @@ It's good practice if you import modules in the following order:
 2. third-party library modules (anything installed in Python's site-packages
    directory) -- e.g. mx.DateTime, ZODB, PIL.Image, etc.
 3. locally-developed modules
-
-Never use relative package imports.  If you're writing code that's in the
-``package.sub.m1`` module and want to import ``package.sub.m2``, do not just
-write ``from . import m2``, even though it's legal.  Write ``from package.sub
-import m2`` instead.  See :pep:`328` for details.
 
 It is sometimes necessary to move imports to a function or class to avoid
 problems with circular imports.  Gordon McMillan says:
@@ -343,13 +330,61 @@ module, but loading a module multiple times is virtually free, costing only a
 couple of dictionary lookups.  Even if the module name has gone out of scope,
 the module is probably available in :data:`sys.modules`.
 
-If only instances of a specific class use a module, then it is reasonable to
-import the module in the class's ``__init__`` method and then assign the module
-to an instance variable so that the module is always available (via that
-instance variable) during the life of the object.  Note that to delay an import
-until the class is instantiated, the import must be inside a method.  Putting
-the import inside the class but outside of any method still causes the import to
-occur when the module is initialized.
+
+Why are default values shared between objects?
+----------------------------------------------
+
+This type of bug commonly bites neophyte programmers.  Consider this function::
+
+   def foo(mydict={}):  # Danger: shared reference to one dict for all calls
+       ... compute something ...
+       mydict[key] = value
+       return mydict
+
+The first time you call this function, ``mydict`` contains a single item.  The
+second time, ``mydict`` contains two items because when ``foo()`` begins
+executing, ``mydict`` starts out with an item already in it.
+
+It is often expected that a function call creates new objects for default
+values. This is not what happens. Default values are created exactly once, when
+the function is defined.  If that object is changed, like the dictionary in this
+example, subsequent calls to the function will refer to this changed object.
+
+By definition, immutable objects such as numbers, strings, tuples, and ``None``,
+are safe from change. Changes to mutable objects such as dictionaries, lists,
+and class instances can lead to confusion.
+
+Because of this feature, it is good programming practice to not use mutable
+objects as default values.  Instead, use ``None`` as the default value and
+inside the function, check if the parameter is ``None`` and create a new
+list/dictionary/whatever if it is.  For example, don't write::
+
+   def foo(mydict={}):
+       ...
+
+but::
+
+   def foo(mydict=None):
+       if mydict is None:
+           mydict = {}  # create a new dict for local namespace
+
+This feature can be useful.  When you have a function that's time-consuming to
+compute, a common technique is to cache the parameters and the resulting value
+of each call to the function, and return the cached value if the same value is
+requested again.  This is called "memoizing", and can be implemented like this::
+
+   # Callers will never provide a third parameter for this function.
+   def expensive(arg1, arg2, _cache={}):
+       if (arg1, arg2) in _cache:
+           return _cache[(arg1, arg2)]
+
+       # Calculate the value
+       result = ... expensive computation ...
+       _cache[(arg1, arg2)] = result           # Store result in the cache
+       return result
+
+You could use a global variable containing a dictionary instead of the default
+value; it's a matter of taste.
 
 
 How can I pass optional or keyword parameters from one function to another?
@@ -390,6 +425,81 @@ arguments a function can accept.  For example, given the function definition::
    func(42, bar=314, extra=somevar)
 
 the values ``42``, ``314``, and ``somevar`` are arguments.
+
+
+Why did changing list 'y' also change list 'x'?
+------------------------------------------------
+
+If you wrote code like::
+
+   >>> x = []
+   >>> y = x
+   >>> y.append(10)
+   >>> y
+   [10]
+   >>> x
+   [10]
+
+you might be wondering why appending an element to ``y`` changed ``x`` too.
+
+There are two factors that produce this result:
+
+1) Variables are simply names that refer to objects.  Doing ``y = x`` doesn't
+   create a copy of the list -- it creates a new variable ``y`` that refers to
+   the same object ``x`` refers to.  This means that there is only one object
+   (the list), and both ``x`` and ``y`` refer to it.
+2) Lists are :term:`mutable`, which means that you can change their content.
+
+After the call to :meth:`~list.append`, the content of the mutable object has
+changed from ``[]`` to ``[10]``.  Since both the variables refer to the same
+object, using either name accesses the modified value ``[10]``.
+
+If we instead assign an immutable object to ``x``::
+
+   >>> x = 5  # ints are immutable
+   >>> y = x
+   >>> x = x + 1  # 5 can't be mutated, we are creating a new object here
+   >>> x
+   6
+   >>> y
+   5
+
+we can see that in this case ``x`` and ``y`` are not equal anymore.  This is
+because integers are :term:`immutable`, and when we do ``x = x + 1`` we are not
+mutating the int ``5`` by incrementing its value; instead, we are creating a
+new object (the int ``6``) and assigning it to ``x`` (that is, changing which
+object ``x`` refers to).  After this assignment we have two objects (the ints
+``6`` and ``5``) and two variables that refer to them (``x`` now refers to
+``6`` but ``y`` still refers to ``5``).
+
+Some operations (for example ``y.append(10)`` and ``y.sort()``) mutate the
+object, whereas superficially similar operations (for example ``y = y + [10]``
+and ``sorted(y)``) create a new object.  In general in Python (and in all cases
+in the standard library) a method that mutates an object will return ``None``
+to help avoid getting the two types of operations confused.  So if you
+mistakenly write ``y.sort()`` thinking it will give you a sorted copy of ``y``,
+you'll instead end up with ``None``, which will likely cause your program to
+generate an easily diagnosed error.
+
+However, there is one class of operations where the same operation sometimes
+has different behaviors with different types:  the augmented assignment
+operators.  For example, ``+=`` mutates lists but not tuples or ints (``a_list
++= [1, 2, 3]`` is equivalent to ``a_list.extend([1, 2, 3])`` and mutates
+``a_list``, whereas ``some_tuple += (1, 2, 3)`` and ``some_int += 1`` create
+new objects).
+
+In other words:
+
+* If we have a mutable object (:class:`list`, :class:`dict`, :class:`set`,
+  etc.), we can use some specific operations to mutate it and all the variables
+  that refer to it will see the change.
+* If we have an immutable object (:class:`str`, :class:`int`, :class:`tuple`,
+  etc.), all the variables that refer to it will always see the same value,
+  but operations that transform that value into a new value always return a new
+  object.
+
+If you want to know if two variables refer to the same object or not, you can
+use the :keyword:`is` operator, or the built-in function :func:`id`.
 
 
 How do I write a function with output parameters (call by reference)?
@@ -711,7 +821,7 @@ By default, these interpret the number as decimal, so that ``int('0144') ==
 144`` and ``int('0x144')`` raises :exc:`ValueError`. ``int(string, base)`` takes
 the base to convert from as a second optional argument, so ``int('0x144', 16) ==
 324``.  If the base is specified as 0, the number is interpreted using Python's
-rules: a leading '0' indicates octal, and '0x' indicates a hex number.
+rules: a leading '0o' indicates octal, and '0x' indicates a hex number.
 
 Do not use the built-in function :func:`eval` if all you need is to convert
 strings to numbers.  :func:`eval` will be significantly slower and it presents a
@@ -732,7 +842,7 @@ To convert, e.g., the number 144 to the string '144', use the built-in type
 constructor :func:`str`.  If you want a hexadecimal or octal representation, use
 the built-in functions :func:`hex` or :func:`oct`.  For fancy formatting, see
 the :ref:`string-formatting` section, e.g. ``"{:04d}".format(144)`` yields
-``'0144'`` and ``"{:.3f}".format(1/3)`` yields ``'0.333'``.
+``'0144'`` and ``"{:.3f}".format(1.0/3.0)`` yields ``'0.333'``.
 
 
 How do I modify a string in place?
@@ -903,7 +1013,7 @@ performance levels:
   as builtins and some extension types.  For example, be sure to use
   either the :meth:`list.sort` built-in method or the related :func:`sorted`
   function to do sorting (and see the
-  `sorting mini-HOWTO <http://wiki.python.org/moin/HowTo/Sorting>`_ for examples
+  `sorting mini-HOWTO <https://wiki.python.org/moin/HowTo/Sorting>`_ for examples
   of moderately advanced usage).
 
 * Abstractions tend to create indirections and force the interpreter to work
@@ -923,7 +1033,7 @@ yourself.
 
 .. seealso::
    The wiki page devoted to `performance tips
-   <http://wiki.python.org/moin/PythonSpeed/PerformanceTips>`_.
+   <https://wiki.python.org/moin/PythonSpeed/PerformanceTips>`_.
 
 .. _efficient_string_concatenation:
 
@@ -1008,7 +1118,7 @@ How do you remove duplicates from a list?
 
 See the Python Cookbook for a long discussion of many ways to do this:
 
-    http://aspn.activestate.com/ASPN/Cookbook/Python/Recipe/52560
+   http://code.activestate.com/recipes/52560/
 
 If you don't mind reordering the list, sort it and then scan from the end of the
 list, deleting duplicates as you go::
@@ -1730,19 +1840,10 @@ These solutions are not mutually exclusive.
 __import__('x.y.z') returns <module 'x'>; how do I get z?
 ---------------------------------------------------------
 
-Try::
+Consider using the convenience function :func:`~importlib.import_module` from
+:mod:`importlib` instead::
 
-   __import__('x.y.z').y.z
-
-For more realistic situations, you may have to do something like ::
-
-   m = __import__(s)
-   for i in s.split(".")[1:]:
-       m = getattr(m, i)
-
-See :mod:`importlib` for a convenience function called
-:func:`~importlib.import_module`.
-
+   z = importlib.import_module('x.y.z')
 
 
 When I edit an imported module and reimport it, the changes don't show up.  Why does this happen?
