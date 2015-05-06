@@ -10,8 +10,18 @@ Release date: 2015-04-24
 Core and Builtins
 -----------------
 
+- Issue #2292: PEP 448: Additional Unpacking Generalizations.
+
+- Issue #24096: Make warnings.warn_explicit more robust against mutation of the
+  warnings.filters list.
+
 - Issue #23996: Avoid a crash when a delegated generator raises an
   unnormalized StopIteration exception.  Patch by Stefan Behnel.
+
+- Issue #23910: Optimize property() getter calls.  Patch by Joe Jevnik.
+
+- Issue #23911: Move path-based importlib bootstrap code to a separate
+  frozen module.
 
 - Issue #24022: Fix tokenizer crash when processing undecodable source code.
 
@@ -19,6 +29,15 @@ Core and Builtins
 
 Library
 -------
+
+- Issue #23880: Tkinter's getint() and getdouble() now support Tcl_Obj.
+  Tkinter's getdouble() now supports any numbers (in particular int).
+
+- Issue #22619: Added negative limit support in the traceback module.
+  Based on patch by Dmitry Kazakov.
+
+- Issue #24094: Fix possible crash in json.encode with poorly behaved dict
+  subclasses.
 
 - Issue #9246: On POSIX, os.getcwd() now supports paths longer than 1025 bytes.
   Patch written by William Orr.
@@ -44,6 +63,12 @@ Library
 - Issue #23887: urllib.error.HTTPError now has a proper repr() representation.
   Patch by Berker Peksag.
 
+Tests
+-----
+
+- Issue #9517: Move script_helper into the support package.
+  Patch by Christie Wilson.
+
 Documentation
 -------------
 
@@ -54,7 +79,13 @@ Documentation
 Tools/Demos
 -----------
 
+- Issue #24001: Argument Clinic converters now use accept={type}
+  instead of types={'type'} to specify the types the converter accepts.
+
+- Issue #23330: h2py now supports arbitrary filenames in #include.
+
 - Issue #24031: make patchcheck now supports git checkouts, too.
+
 
 What's New in Python 3.5.0 alpha 4?
 ===================================
