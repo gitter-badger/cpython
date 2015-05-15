@@ -10,6 +10,17 @@ Release date: 2015-04-24
 Core and Builtins
 -----------------
 
+- Issue #15027: The UTF-32 encoder is now 3x to 7x faster.
+
+- Issue #23290:  Optimize set_merge() for cases where the target is empty.
+  (Contributed by Serhiy Storchaka.)
+
+- Issue #20274: When calling a _sqlite.Connection, it now complains if passed
+  any keyword arguments.  Previously it silently ignored them.
+
+- Issue #20274: Remove ignored and erroneous "kwargs" parameters from three
+  METH_VARARGS methods on _sqlite.Connection.
+
 - Issue #2292: PEP 448: Additional Unpacking Generalizations.
 
 - Issue #24096: Make warnings.warn_explicit more robust against mutation of the
@@ -27,8 +38,46 @@ Core and Builtins
 
 - Issue #9951: Added a hex() method to bytes, bytearray, and memoryview.
 
+- Issue #22906: PEP 479: Change StopIteration handling inside generators.
+
+- Issue #24017: PEP 492: Coroutines with async and await syntax.
+
 Library
 -------
+
+- Issue #23488: Random generator objects now consume 2x less memory on 64-bit.
+
+- Issue #1322: platform.dist() and platform.linux_distribution() functions are
+  now deprecated.  Initial patch by Vajrasky Kok.
+
+- Issue #22486: Added the math.gcd() function.  The fractions.gcd() function now is
+  deprecated.  Based on patch by Mark Dickinson.
+
+- Issue #24064: Property() docstrings are now writeable.
+  (Patch by Berker Peksag.)
+
+- Issue #22681: Added support for the koi8_t encoding.
+
+- Issue #22682: Added support for the kz1048 encoding.
+
+- Issue #23796: peak and read1 methods of BufferedReader now raise ValueError
+  if they called on a closed object. Patch by John Hergenroeder.
+
+- Issue #21795: smtpd now supports the 8BITMIME extension whenever
+  the new *decode_data* constructor argument is set to False.
+
+- Issue #24155: optimize heapq.heapify() for better cache performance
+  when heapifying large lists.
+
+- Issue #21800: imaplib now supports RFC 5161 (enable), RFC 6855
+  (utf8/internationalized email) and automatically encodes non-ASCII
+  usernames and passwords to UTF8.
+
+- Issue #24134: assertRaises(), assertRaisesRegex(), assertWarns() and
+  assertWarnsRegex() checks are not longer successful if the callable is None.
+
+- Issue #24018: Add a collections.abc.Generator abstract base class.
+  Contributed by Stefan Behnel.
 
 - Issue #23880: Tkinter's getint() and getdouble() now support Tcl_Obj.
   Tkinter's getdouble() now supports any numbers (in particular int).
@@ -63,8 +112,27 @@ Library
 - Issue #23887: urllib.error.HTTPError now has a proper repr() representation.
   Patch by Berker Peksag.
 
+- asyncio: New event loop APIs: set_task_factory() and get_task_factory().
+
+- asyncio: async() function is deprecated in favour of ensure_future().
+
+- Issue 24178: asyncio.Lock, Condition, Semaphore, and BoundedSemaphore
+  support new 'async with' syntax.  Contributed by Yury Selivanov.
+
+- Issue 24179: Support 'async for' for asyncio.StreamReader.
+  Contributed by Yury Selivanov.
+
+- Issue 24184: Add AsyncIterator and AsyncIterable ABCs to
+  collections.abc.  Contributed by Yury Selivanov.
+
+- Issue 22547: Implement informative __repr__ for inspect.BoundArguments.
+  Contributed by Yury Selivanov.
+
 Tests
 -----
+
+- Issue #21520: test_zipfile no longer fails if the word 'bad' appears
+  anywhere in the name of the current directory.
 
 - Issue #9517: Move script_helper into the support package.
   Patch by Christie Wilson.
@@ -78,6 +146,9 @@ Documentation
 
 Tools/Demos
 -----------
+
+- Issue #24000: Improved Argument Clinic's mapping of converters to legacy
+  "format units".  Updated the documentation to match.
 
 - Issue #24001: Argument Clinic converters now use accept={type}
   instead of types={'type'} to specify the types the converter accepts.
@@ -151,6 +222,8 @@ Library
 - Issue #21217: inspect.getsourcelines() now tries to compute the start and end
   lines from the code object, fixing an issue when a lambda function is used as
   decorator argument. Patch by Thomas Ballinger and Allison Kaptur.
+
+- The keywords attribute of functools.partial is now always a dictionary.
 
 - Issue #23811: Add missing newline to the PyCompileError error message.
   Patch by Alex Shkop.

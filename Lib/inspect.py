@@ -33,6 +33,7 @@ __author__ = ('Ka-Ping Yee <ping@lfw.org>',
 
 import ast
 import dis
+import collections.abc
 import enum
 import importlib.machinery
 import itertools
@@ -174,7 +175,22 @@ def isgeneratorfunction(object):
 
     See help(isfunction) for attributes listing."""
     return bool((isfunction(object) or ismethod(object)) and
-                object.__code__.co_flags & CO_GENERATOR)
+                object.__code__.co_flags & CO_GENERATOR and
+                not object.__code__.co_flags & CO_COROUTINE)
+
+def iscoroutinefunction(object):
+    """Return true if the object is a coroutine function.
+
+    Coroutine functions are defined with "async def" syntax,
+    or generators decorated with "types.coroutine".
+    """
+    return bool((isfunction(object) or ismethod(object)) and
+                object.__code__.co_flags & (CO_ITERABLE_COROUTINE |
+                                            CO_COROUTINE))
+
+def isawaitable(object):
+    """Return true if the object can be used in "await" expression."""
+    return isinstance(object, collections.abc.Awaitable)
 
 def isgenerator(object):
     """Return true if the object is a generator.
@@ -191,7 +207,13 @@ def isgenerator(object):
         send            resumes the generator and "sends" a value that becomes
                         the result of the current yield-expression
         throw           used to raise an exception inside the generator"""
-    return isinstance(object, types.GeneratorType)
+    return (isinstance(object, types.GeneratorType) and
+            not object.gi_code.co_flags & CO_COROUTINE)
+
+def iscoroutine(object):
+    """Return true if the object is a coroutine."""
+    return (isinstance(object, types.GeneratorType) and
+            object.gi_code.co_flags & (CO_COROUTINE | CO_ITERABLE_COROUTINE))
 
 def istraceback(object):
     """Return true if the object is a traceback.
@@ -2324,18 +2346,21 @@ class Parameter:
         return formatted
 
     def __repr__(self):
-        return '<{} at {:#x} "{}">'.format(self.__class__.__name__,
-                                           id(self), self)
+        return '<{} "{}">'.format(self.__class__.__name__, self)
 
     def __hash__(self):
         return hash((self.name, self.kind, self.annotation, self.default))
 
     def __eq__(self, other):
-        return (issubclass(other.__class__, Parameter) and
-                self._name == other._name and
-                self._kind == other._kind and
-                self._default == other._default and
-                self._annotation == other._annotation)
+        return (self is other or
+                    (issubclass(other.__class__, Parameter) and
+                     self._name == other._name and
+                     self._kind == other._kind and
+                     self._default == other._default and
+                     self._annotation == other._annotation))
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
 
 
 class BoundArguments:
@@ -2354,6 +2379,8 @@ class BoundArguments:
     * kwargs : dict
         Dict of keyword arguments values.
     """
+
+    __slots__ = ('arguments', '_signature', '__weakref__')
 
     def __init__(self, signature, arguments):
         self.arguments = arguments
@@ -2417,9 +2444,26 @@ class BoundArguments:
         return kwargs
 
     def __eq__(self, other):
-        return (issubclass(other.__class__, BoundArguments) and
-                self.signature == other.signature and
-                self.arguments == other.arguments)
+        return (self is other or
+                    (issubclass(other.__class__, BoundArguments) and
+                     self.signature == other.signature and
+                     self.arguments == other.arguments))
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __setstate__(self, state):
+        self._signature = state['_signature']
+        self.arguments = state['arguments']
+
+    def __getstate__(self):
+        return {'_signature': self._signature, 'arguments': self.arguments}
+
+    def __repr__(self):
+        args = []
+        for arg, value in self.arguments.items():
+            args.append('{}={!r}'.format(arg, value))
+        return '<{} ({})>'.format(self.__class__.__name__, ', '.join(args))
 
 
 class Signature:
@@ -2632,8 +2676,12 @@ class Signature:
         return hash((params, kwo_params, return_annotation))
 
     def __eq__(self, other):
-        return (isinstance(other, Signature) and
-                self._hash_basis() == other._hash_basis())
+        return (self is other or
+                    (isinstance(other, Signature) and
+                     self._hash_basis() == other._hash_basis()))
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
 
     def _bind(self, args, kwargs, *, partial=False):
         """Private method. Don't use directly."""
@@ -2785,8 +2833,7 @@ class Signature:
         self._return_annotation = state['_return_annotation']
 
     def __repr__(self):
-        return '<{} at {:#x} "{}">'.format(self.__class__.__name__,
-                                           id(self), self)
+        return '<{} {}>'.format(self.__class__.__name__, self)
 
     def __str__(self):
         result = []

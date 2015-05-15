@@ -18,6 +18,7 @@ import textwrap
 import unicodedata
 import unittest
 import unittest.mock
+import warnings
 
 try:
     from concurrent.futures import ThreadPoolExecutor
@@ -62,14 +63,16 @@ class IsTestBase(unittest.TestCase):
     predicates = set([inspect.isbuiltin, inspect.isclass, inspect.iscode,
                       inspect.isframe, inspect.isfunction, inspect.ismethod,
                       inspect.ismodule, inspect.istraceback,
-                      inspect.isgenerator, inspect.isgeneratorfunction])
+                      inspect.isgenerator, inspect.isgeneratorfunction,
+                      inspect.iscoroutine, inspect.iscoroutinefunction])
 
     def istest(self, predicate, exp):
         obj = eval(exp)
         self.assertTrue(predicate(obj), '%s(%s)' % (predicate.__name__, exp))
 
         for other in self.predicates - set([predicate]):
-            if predicate == inspect.isgeneratorfunction and\
+            if (predicate == inspect.isgeneratorfunction or \
+               predicate == inspect.iscoroutinefunction) and \
                other == inspect.isfunction:
                 continue
             self.assertFalse(other(obj), 'not %s(%s)' % (other.__name__, exp))
@@ -78,13 +81,21 @@ def generator_function_example(self):
     for i in range(2):
         yield i
 
+async def coroutine_function_example(self):
+    return 'spam'
+
+@types.coroutine
+def gen_coroutine_function_example(self):
+    yield
+    return 'spam'
+
 
 class TestPredicates(IsTestBase):
-    def test_sixteen(self):
+    def test_eightteen(self):
         count = len([x for x in dir(inspect) if x.startswith('is')])
         # This test is here for remember you to update Doc/library/inspect.rst
         # which claims there are 16 such functions
-        expected = 16
+        expected = 19
         err_msg = "There are %d (not %d) is* functions" % (count, expected)
         self.assertEqual(count, expected, err_msg)
 
@@ -115,10 +126,63 @@ class TestPredicates(IsTestBase):
         self.istest(inspect.isdatadescriptor, 'collections.defaultdict.default_factory')
         self.istest(inspect.isgenerator, '(x for x in range(2))')
         self.istest(inspect.isgeneratorfunction, 'generator_function_example')
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.istest(inspect.iscoroutine, 'coroutine_function_example(1)')
+            self.istest(inspect.iscoroutinefunction, 'coroutine_function_example')
+
         if hasattr(types, 'MemberDescriptorType'):
             self.istest(inspect.ismemberdescriptor, 'datetime.timedelta.days')
         else:
             self.assertFalse(inspect.ismemberdescriptor(datetime.timedelta.days))
+
+    def test_iscoroutine(self):
+        gen_coro = gen_coroutine_function_example(1)
+        coro = coroutine_function_example(1)
+
+        self.assertTrue(
+            inspect.iscoroutinefunction(gen_coroutine_function_example))
+        self.assertTrue(inspect.iscoroutine(gen_coro))
+
+        self.assertTrue(
+            inspect.isgeneratorfunction(gen_coroutine_function_example))
+        self.assertTrue(inspect.isgenerator(gen_coro))
+
+        self.assertTrue(
+            inspect.iscoroutinefunction(coroutine_function_example))
+        self.assertTrue(inspect.iscoroutine(coro))
+
+        self.assertFalse(
+            inspect.isgeneratorfunction(coroutine_function_example))
+        self.assertFalse(inspect.isgenerator(coro))
+
+        coro.close(); gen_coro.close() # silence warnings
+
+    def test_isawaitable(self):
+        def gen(): yield
+        self.assertFalse(inspect.isawaitable(gen()))
+
+        coro = coroutine_function_example(1)
+        gen_coro = gen_coroutine_function_example(1)
+
+        self.assertTrue(
+            inspect.isawaitable(coro))
+        self.assertTrue(
+            inspect.isawaitable(gen_coro))
+
+        class Future:
+            def __await__():
+                pass
+        self.assertTrue(inspect.isawaitable(Future()))
+        self.assertFalse(inspect.isawaitable(Future))
+
+        class NotFuture: pass
+        not_fut = NotFuture()
+        not_fut.__await__ = lambda: None
+        self.assertFalse(inspect.isawaitable(not_fut))
+
+        coro.close(); gen_coro.close() # silence warnings
 
     def test_isroutine(self):
         self.assertTrue(inspect.isroutine(mod.spam))
@@ -1729,7 +1793,7 @@ class TestSignatureObject(unittest.TestCase):
             S((pkd, pk))
 
         self.assertTrue(repr(sig).startswith('<Signature'))
-        self.assertTrue('"(po, pk' in repr(sig))
+        self.assertTrue('(po, pk' in repr(sig))
 
     def test_signature_object_pickle(self):
         def foo(a, b, *, c:1={}, **kw) -> {42:'ham'}: pass
@@ -3069,6 +3133,12 @@ class TestBoundArguments(unittest.TestCase):
         ba4 = inspect.signature(bar).bind(1)
         self.assertNotEqual(ba, ba4)
 
+        def foo(*, a, b): pass
+        sig = inspect.signature(foo)
+        ba1 = sig.bind(a=1, b=2)
+        ba2 = sig.bind(b=2, a=1)
+        self.assertEqual(ba1, ba2)
+
     def test_signature_bound_arguments_pickle(self):
         def foo(a, b, *, c:1={}, **kw) -> {42:'ham'}: pass
         sig = inspect.signature(foo)
@@ -3078,6 +3148,12 @@ class TestBoundArguments(unittest.TestCase):
             with self.subTest(pickle_ver=ver):
                 ba_pickled = pickle.loads(pickle.dumps(ba, ver))
                 self.assertEqual(ba, ba_pickled)
+
+    def test_signature_bound_arguments_repr(self):
+        def foo(a, b, *, c:1={}, **kw) -> {42:'ham'}: pass
+        sig = inspect.signature(foo)
+        ba = sig.bind(20, 30, z={})
+        self.assertRegex(repr(ba), r'<BoundArguments \(a=20,.*\}\}\)>')
 
 
 class TestSignaturePrivateHelpers(unittest.TestCase):
