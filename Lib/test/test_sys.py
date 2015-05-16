@@ -499,6 +499,7 @@ class SizeofTest(unittest.TestCase):
         self.assertEqual(sys.getsizeof(True, -1), size('l'))
 
     def test_objecttypes(self):
+        import dtrace
         # check all types defined in Objects/
         size = test.test_support.calcobjsize
         vsize = test.test_support.calcvobjsize
@@ -536,7 +537,10 @@ class SizeofTest(unittest.TestCase):
         # complex
         check(complex(0,1), size('2d'))
         # code
-        check(get_cell().func_code, size('4i8Pi3P'))
+        if dtrace.available :
+            check(get_cell().func_code, size('4i8PiPH2P'))
+        else :
+            check(get_cell().func_code, size('4i8Pi3P'))
         # BaseException
         check(BaseException(), size('3P'))
         # UnicodeEncodeError

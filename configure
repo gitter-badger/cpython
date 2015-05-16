@@ -639,6 +639,11 @@ TRUE
 MACHDEP_OBJS
 DYNLOADFILE
 DLINCLDIR
+DTRACEOBJS
+DTRACE_LINKER
+DTRACE_NM
+DFLAGS
+DTRACE
 THREADOBJ
 LDLAST
 USE_THREAD_MODULE
@@ -801,6 +806,7 @@ with_doc_strings
 with_tsc
 with_pymalloc
 with_valgrind
+with_dtrace
 with_wctype_functions
 with_fpectl
 with_libm
@@ -1482,6 +1488,7 @@ Optional Packages:
   --with(out)-tsc         enable/disable timestamp counter profile
   --with(out)-pymalloc    disable/enable specialized mallocs
   --with-valgrind         Enable Valgrind support
+  --with(out)-dtrace      disable/enable dtrace support
   --with-wctype-functions use wctype.h functions
   --with-fpectl           enable SIGFPE catching
   --with-libm=STRING      math library
@@ -10065,6 +10072,181 @@ fi
 
 
 fi
+
+# Check for dtrace support
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for --with-dtrace" >&5
+$as_echo_n "checking for --with-dtrace... " >&6; }
+
+# Check whether --with-dtrace was given.
+if test "${with_dtrace+set}" = set; then :
+  withval=$with_dtrace;
+else
+  with_dtrace=no
+fi
+
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $with_dtrace" >&5
+$as_echo "$with_dtrace" >&6; }
+
+
+
+
+
+DTRACE=
+DFLAGS=
+if test "$with_dtrace" = "yes"
+then
+    DTRACE_NM=OTHER
+    DTRACE_LINKER=ld
+    DTRACEOBJS="Python/pydtrace.o"
+    # Extract the first word of "dtrace", so it can be a program name with args.
+set dummy dtrace; ac_word=$2
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for $ac_word" >&5
+$as_echo_n "checking for $ac_word... " >&6; }
+if ${ac_cv_path_DTRACE+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  case $DTRACE in
+  [\\/]* | ?:[\\/]*)
+  ac_cv_path_DTRACE="$DTRACE" # Let the user override the test with a path.
+  ;;
+  *)
+  as_save_IFS=$IFS; IFS=$PATH_SEPARATOR
+for as_dir in $PATH$PATH_SEPARATOR/usr/sbin
+do
+  IFS=$as_save_IFS
+  test -z "$as_dir" && as_dir=.
+    for ac_exec_ext in '' $ac_executable_extensions; do
+  if as_fn_executable_p "$as_dir/$ac_word$ac_exec_ext"; then
+    ac_cv_path_DTRACE="$as_dir/$ac_word$ac_exec_ext"
+    $as_echo "$as_me:${as_lineno-$LINENO}: found $as_dir/$ac_word$ac_exec_ext" >&5
+    break 2
+  fi
+done
+  done
+IFS=$as_save_IFS
+
+  test -z "$ac_cv_path_DTRACE" && ac_cv_path_DTRACE="dtrace"
+  ;;
+esac
+fi
+DTRACE=$ac_cv_path_DTRACE
+if test -n "$DTRACE"; then
+  { $as_echo "$as_me:${as_lineno-$LINENO}: result: $DTRACE" >&5
+$as_echo "$DTRACE" >&6; }
+else
+  { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+fi
+
+
+    # The cast to long int works around a bug in the HP C Compiler
+# version HP92453-01 B.11.11.23709.GP, which incorrectly rejects
+# declarations like `int a3[[(sizeof (unsigned char)) >= 0]];'.
+# This bug is HP SR number 8606223364.
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking size of long" >&5
+$as_echo_n "checking size of long... " >&6; }
+if ${ac_cv_sizeof_long+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  if ac_fn_c_compute_int "$LINENO" "(long int) (sizeof (long))" "ac_cv_sizeof_long"        "$ac_includes_default"; then :
+
+else
+  if test "$ac_cv_type_long" = yes; then
+     { { $as_echo "$as_me:${as_lineno-$LINENO}: error: in \`$ac_pwd':" >&5
+$as_echo "$as_me: error: in \`$ac_pwd':" >&2;}
+as_fn_error 77 "cannot compute sizeof (long)
+See \`config.log' for more details" "$LINENO" 5; }
+   else
+     ac_cv_sizeof_long=0
+   fi
+fi
+
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_sizeof_long" >&5
+$as_echo "$ac_cv_sizeof_long" >&6; }
+
+
+
+cat >>confdefs.h <<_ACEOF
+#define SIZEOF_LONG $ac_cv_sizeof_long
+_ACEOF
+
+
+    if test "$ac_cv_sizeof_long" -eq 8
+    then
+        DFLAGS="-64"
+    else
+        DFLAGS="-32"
+    fi
+    sys_release="$ac_sys_release"
+    if test $ac_sys_system = "SunOS"
+    then
+        if test $sys_release="5.11"
+        then
+            sys_release=`uname -v`
+        fi
+    fi
+    case $ac_sys_system/$sys_release in
+        SunOS/5.10)
+            DTRACE_NM=SOLARIS
+            DTRACE_LINKER=/usr/ccs/bin/ld
+            ;;
+        SunOS/11.*)
+            DTRACE_NM=SOLARIS
+            DTRACE_LINKER=/usr/ccs/bin/ld
+	    ;;
+        SunOS/*)
+            DTRACE_LINKER=/usr/ccs/bin/ld
+            ;;
+        Darwin/*)
+            DTRACEOBJS=""  # Not needed in Mac
+            # The cast to long int works around a bug in the HP C Compiler
+# version HP92453-01 B.11.11.23709.GP, which incorrectly rejects
+# declarations like `int a3[[(sizeof (unsigned char)) >= 0]];'.
+# This bug is HP SR number 8606223364.
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking size of long" >&5
+$as_echo_n "checking size of long... " >&6; }
+if ${ac_cv_sizeof_long+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  if ac_fn_c_compute_int "$LINENO" "(long int) (sizeof (long))" "ac_cv_sizeof_long"        "$ac_includes_default"; then :
+
+else
+  if test "$ac_cv_type_long" = yes; then
+     { { $as_echo "$as_me:${as_lineno-$LINENO}: error: in \`$ac_pwd':" >&5
+$as_echo "$as_me: error: in \`$ac_pwd':" >&2;}
+as_fn_error 77 "cannot compute sizeof (long)
+See \`config.log' for more details" "$LINENO" 5; }
+   else
+     ac_cv_sizeof_long=0
+   fi
+fi
+
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_sizeof_long" >&5
+$as_echo "$ac_cv_sizeof_long" >&6; }
+
+
+
+cat >>confdefs.h <<_ACEOF
+#define SIZEOF_LONG $ac_cv_sizeof_long
+_ACEOF
+
+
+            if test "$ac_cv_sizeof_long" -eq 8
+            then
+                DFLAGS="-arch i386"
+            else
+                DFLAGS="-arch x86_64"
+            fi
+            ;;
+    esac
+
+$as_echo "#define WITH_DTRACE 1" >>confdefs.h
+
+fi
+
+
 
 # Check for --with-wctype-functions
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for --with-wctype-functions" >&5

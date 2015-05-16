@@ -104,6 +104,28 @@ PyCode_New(int argcount, int nlocals, int stacksize, int flags,
         co->co_lnotab = lnotab;
         co->co_zombieframe = NULL;
         co->co_weakreflist = NULL;
+#ifdef WITH_DTRACE
+        i = PyString_Size(co->co_code);
+        co->co_linenos = PyMem_Malloc(sizeof(unsigned short) * i);
+        if (co->co_linenos) {
+            unsigned short *p = (unsigned short *)(co->co_linenos);
+            unsigned char *p2 = (unsigned char*)PyString_AsString(co->co_lnotab);
+            int size = PyString_Size(co->co_lnotab) / 2;
+            int i2;
+            unsigned short offset = 0;
+
+            while (size) {
+                size -= 1;
+                i2 = *p2++;
+                i-=i2;
+                while (i2--)
+                    *p++ = offset;
+                offset += *p2++;
+            }
+            while(i--)
+                *p++ = offset;
+        }
+#endif
     }
     return co;
 }
@@ -313,6 +335,10 @@ code_dealloc(PyCodeObject *co)
     Py_XDECREF(co->co_filename);
     Py_XDECREF(co->co_name);
     Py_XDECREF(co->co_lnotab);
+#ifdef WITH_DTRACE
+    if (co->co_linenos)
+        PyMem_Free(co->co_linenos);
+#endif
     if (co->co_zombieframe != NULL)
         PyObject_GC_Del(co->co_zombieframe);
     if (co->co_weakreflist != NULL)

@@ -1403,7 +1403,6 @@ _PySys_Init(void)
     Py_XDECREF(sysin);
     Py_XDECREF(sysout);
     Py_XDECREF(syserr);
-
     SET_SYS_FROM_STRING("version",
                          PyString_FromString(Py_GetVersion()));
     SET_SYS_FROM_STRING("hexversion",
