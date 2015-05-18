@@ -51,6 +51,13 @@ SHELL=		/bin/sh
 # Use this to make a link between python$(VERSION) and python in $(BINDIR)
 LN=		@LN@
 
+DTRACE=         @DTRACE@
+DFLAGS=         @DFLAGS@
+DTRACEOBJS=     @DTRACEOBJS@
+DTRACE_NM=      @DTRACE_NM@
+DTRACE_LINKER=  @DTRACE_LINKER@
+
+
 # Portable install script (configure doesn't always guess right)
 INSTALL=	@INSTALL@
 INSTALL_PROGRAM=@INSTALL_PROGRAM@
@@ -570,6 +577,7 @@ Modules/getbuildinfo.o: $(PARSER_OBJS) \
 		$(MODULE_OBJS) \
 		$(SIGNAL_OBJS) \
 		$(MODOBJS) \
+		$(DTRACEOBJS) \
 		$(srcdir)/Modules/getbuildinfo.c
 	$(CC) -c $(PY_CFLAGS) \
 	      -DSVNVERSION="\"`LC_ALL=C $(SVNVERSION)`\"" \
@@ -577,6 +585,11 @@ Modules/getbuildinfo.o: $(PARSER_OBJS) \
 	      -DHGTAG="\"`LC_ALL=C $(HGTAG)`\"" \
 	      -DHGBRANCH="\"`LC_ALL=C $(HGBRANCH)`\"" \
 	      -o $@ $(srcdir)/Modules/getbuildinfo.c
+	if test "$(DTRACEOBJS)" != "" ; then \
+		$(DTRACE_LINKER) --relocatable \
+	          $@ $(DTRACEOBJS) -o $@.DTRACE ; \
+		mv $@.DTRACE $@ ; \
+	fi;
 
 Modules/getpath.o: $(srcdir)/Modules/getpath.c Makefile
 	$(CC) -c $(PY_CFLAGS) -DPYTHONPATH='"$(PYTHONPATH)"' \
@@ -663,6 +676,52 @@ Python/formatter_unicode.o: $(srcdir)/Python/formatter_unicode.c \
 
 Python/formatter_string.o: $(srcdir)/Python/formatter_string.c \
 				$(STRINGLIB_HEADERS)
+
+
+Include/pydtrace.h: Include/pydtrace.d
+	if test "$(DTRACE)" != "" ; then \
+		$(DTRACE) -o $@ $(DFLAGS) \
+			-C -h -s Include/pydtrace.d ; \
+	else	touch $@ ; \
+	fi;
+
+Include/pydtrace_offsets.h: Include/pydtrace_offsets.c Python/ceval.o
+	$(CC) $(OPT) $(LDFLAGS) -o Include/pydtrace_offsets \
+		Include/pydtrace_offsets.c
+	Include/pydtrace_offsets.sh $(DTRACE_NM) \
+		Python/ceval.o Include/pydtrace_offsets > \
+		Include/pydtrace_offsets.h
+
+Python/ceval.o: Include/pydtrace.h
+Modules/gcmodule.o: Include/pydtrace.h
+Objects/classobject.o: Include/pydtrace.h
+Objects/typeobject.o: Include/pydtrace.h
+
+Python/pydtrace.o: Include/pydtrace.d Include/pydtrace_offsets.h \
+			Python/ceval.o Modules/gcmodule.o \
+			Objects/classobject.o Objects/typeobject.o
+	# We do the "touch" game to break a circular dependency between
+	# "Python/ceval.o" and "Include/pydtrace_offsets.h".
+	if test "$(DTRACE)" != "" ; then \
+		touch -r Python/ceval.o Python/ceval.o.ts_dtrace ; \
+		touch -r Modules/gcmodule.o Modules/gcmodule.o.ts_dtrace ; \
+		touch -r Objects/classobject.o Objects/classobject.o.ts_dtrace ; \
+		touch -r Objects/typeobject.o Objects/typeobject.o.ts_dtrace ; \
+		$(DTRACE) -o $@ -DPYDTRACE_STACK_HELPER \
+			$(CPPFLAGS) $(DFLAGS) \
+			-C -G -s Include/pydtrace.d \
+			  Python/ceval.o Modules/gcmodule.o \
+			  Objects/classobject.o Objects/typeobject.o ; \
+		touch -r Python/ceval.o.ts_dtrace Python/ceval.o ; \
+		touch -r Modules/gcmodule.o.ts_dtrace Modules/gcmodule.o ; \
+		touch -r Objects/classobject.o.ts_dtrace Objects/classobject.o ; \
+		touch -r Objects/typeobject.o.ts_dtrace Objects/typeobject.o ; \
+		rm Python/ceval.o.ts_dtrace ; \
+		rm Modules/gcmodule.o.ts_dtrace ; \
+		rm Objects/classobject.o.ts_dtrace ; \
+		rm Objects/typeobject.o.ts_dtrace ; \
+	else    touch $@ ; \
+	fi;
 
 ############################################################################
 # Header files
@@ -1280,6 +1339,12 @@ clean: pycremoval
 	find . -name '*.so.[0-9]*.[0-9]*' -exec rm -f {} ';'
 	find build -name 'fficonfig.h' -exec rm -f {} ';' || true
 	find build -name 'fficonfig.py' -exec rm -f {} ';' || true
+	rm -f Include/pydtrace.h
+	rm -f Include/pydtrace_offsets Include/pydtrace_offsets.h 
+	rm -f Python/ceval.o.ts_dtrace
+	rm -f Modules/gcmodule.o.ts_dtrace
+	rm -f Objects/classobject.o.ts_dtrace
+	rm -f Objects/typeobject.o.ts_dtrace
 	-rm -f Lib/lib2to3/*Grammar*.pickle
 
 profile-removal:
@@ -1309,6 +1374,12 @@ distclean: clobber
 				     -o -name '*.orig' -o -name '*.rej' \
 				     -o -name '*.bak' ')' \
 				     -exec rm -f {} ';'
+	rm -f Include/pydtrace.h
+	rm -f Include/pydtrace_offsets Include/pydtrace_offsets.h
+	rm -f Python/ceval.o.ts_dtrace
+	rm -f Modules/gcmodule.o.ts_dtrace
+	rm -f Objects/classobject.o.ts_dtrace
+	rm -f Objects/typeobject.o.ts_dtrace
 
 # Check for smelly exported symbols (not starting with Py/_Py)
 smelly: all

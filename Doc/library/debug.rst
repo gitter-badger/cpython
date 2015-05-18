@@ -15,3 +15,4 @@ allowing you to identify bottlenecks in your programs.
    hotshot.rst
    timeit.rst
    trace.rst
+   dtrace.rst

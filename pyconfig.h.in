@@ -1104,7 +1104,7 @@
 /* Define if you want documentation strings in extension modules */
 #undef WITH_DOC_STRINGS
 
-/* Define if you want to compile in Dtrace support */
+/* Define to compile in Dtrace support */
 #undef WITH_DTRACE
 
 /* Define if you want to use the new-style (Openstep, Rhapsody, MacOS) dynamic

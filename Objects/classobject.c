@@ -4,6 +4,10 @@
 #include "Python.h"
 #include "structmember.h"
 
+#ifdef WITH_DTRACE
+#include "pydtrace.h"
+#endif
+
 /* Free list for method objects to safe malloc/free overhead
  * The im_self element is used to chain the elements.
  */
@@ -553,6 +557,30 @@ PyInstance_New(PyObject *klass, PyObject *arg, PyObject *kw)
     PyObject *init;
     static PyObject *initstr;
 
+#ifdef WITH_DTRACE
+    PyObject *mod;
+    char *mod_name;
+    char *cl_name;
+
+    if (PYTHON_INSTANCE_NEW_START_ENABLED()) {
+        mod = PyDict_GetItemString(((PyClassObject *)klass)->cl_dict,
+                "__module__");
+
+        if (mod == NULL || !PyString_Check(mod)) {
+            mod_name = "?";
+        } else {
+            mod_name = PyString_AS_STRING(mod);
+            if (!mod_name)
+                 mod_name = "?";
+        }
+        cl_name = PyString_AS_STRING(((PyClassObject *)klass)->cl_name);
+        if (!cl_name)
+            cl_name = "?";
+
+        PYTHON_INSTANCE_NEW_START(cl_name, mod_name);
+    }
+#endif
+
     if (initstr == NULL) {
         initstr = PyString_InternFromString("__init__");
         if (initstr == NULL)
@@ -594,6 +622,26 @@ PyInstance_New(PyObject *klass, PyObject *arg, PyObject *kw)
             Py_DECREF(res);
         }
     }
+
+#ifdef WITH_DTRACE
+    if (PYTHON_INSTANCE_NEW_DONE_ENABLED()) {
+        mod = PyDict_GetItemString(((PyClassObject *)klass)->cl_dict,
+                "__module__");
+
+        if (mod == NULL || !PyString_Check(mod)) {
+            mod_name = "?";
+        } else {
+            mod_name = PyString_AS_STRING(mod);
+            if (!mod_name)
+                 mod_name = "?";
+        }
+        cl_name = PyString_AS_STRING(((PyClassObject *)klass)->cl_name);
+        if (!cl_name)
+            cl_name = "?";
+
+        PYTHON_INSTANCE_NEW_DONE(cl_name, mod_name);
+    }
+#endif
     return (PyObject *)inst;
 }
 
@@ -628,7 +676,12 @@ instance_new(PyTypeObject* type, PyObject* args, PyObject *kw)
 
 
 static void
-instance_dealloc(register PyInstanceObject *inst)
+#ifdef WITH_DTRACE
+instance_dealloc2
+#else
+instance_dealloc
+#endif
+(register PyInstanceObject *inst)
 {
     PyObject *error_type, *error_value, *error_traceback;
     PyObject *del;
@@ -704,6 +757,49 @@ instance_dealloc(register PyInstanceObject *inst)
 #endif
     }
 }
+
+#ifdef WITH_DTRACE
+static void
+instance_dealloc(register PyInstanceObject *inst)
+{
+    PyObject *mod;
+    char *mod_name = NULL;
+    char *cl_name = NULL;
+    PyClassObject *in_class;
+
+    if (PYTHON_INSTANCE_DELETE_START_ENABLED() ||
+            PYTHON_INSTANCE_DELETE_DONE_ENABLED()) {
+        in_class = inst->in_class;
+        Py_INCREF(in_class);
+        mod = PyDict_GetItemString(in_class->cl_dict, "__module__");
+        if (mod == NULL || !PyString_Check(mod)) {
+            mod_name = "?";
+        } else {
+            mod_name = PyString_AS_STRING(mod);
+            if (!mod_name)
+                 mod_name = "?";
+        }
+        cl_name = PyString_AS_STRING(in_class->cl_name);
+        if (!cl_name)
+             cl_name = "?";
+    }
+
+    if (PYTHON_INSTANCE_DELETE_START_ENABLED() && cl_name) {
+        PYTHON_INSTANCE_DELETE_START(cl_name, mod_name);
+    }
+
+    instance_dealloc2(inst);
+
+    if (PYTHON_INSTANCE_DELETE_DONE_ENABLED() && cl_name) {
+        PYTHON_INSTANCE_DELETE_DONE(cl_name, mod_name);
+    }
+
+    if (cl_name) {
+        Py_DECREF(in_class);
+    }
+}
+#endif
+
 
 static PyObject *
 instance_getattr1(register PyInstanceObject *inst, PyObject *name)
