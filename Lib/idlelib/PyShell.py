@@ -1,4 +1,5 @@
 #! /usr/bin/env python
+from __future__ import print_function
 
 import os
 import os.path
@@ -9,8 +10,6 @@ import re
 import socket
 import time
 import threading
-import traceback
-import types
 import io
 
 import linecache
@@ -20,8 +19,8 @@ from platform import python_version, system
 try:
     from Tkinter import *
 except ImportError:
-    print>>sys.__stderr__, "** IDLE can't import Tkinter.  " \
-                           "Your Python may not be configured for Tk. **"
+    print("** IDLE can't import Tkinter.\n"
+          "Your Python may not be configured for Tk. **", file=sys.__stderr__)
     sys.exit(1)
 import tkMessageBox
 
@@ -31,11 +30,11 @@ from idlelib.ColorDelegator import ColorDelegator
 from idlelib.UndoDelegator import UndoDelegator
 from idlelib.OutputWindow import OutputWindow
 from idlelib.configHandler import idleConf
-from idlelib import idlever
 from idlelib import rpc
 from idlelib import Debugger
 from idlelib import RemoteDebugger
 from idlelib import macosxSupport
+from idlelib import IOBinding
 
 IDENTCHARS = string.ascii_letters + string.digits + "_"
 HOST = '127.0.0.1' # python execution server on localhost loopback
@@ -143,6 +142,7 @@ class PyShellEditorWindow(EditorWindow):
         self.io.set_filename_change_hook(filename_changed_hook)
         if self.io.filename:
             self.restore_file_breaks()
+        self.color_breakpoint_text()
 
     rmenu_specs = [
         ("Cut", "<<cut>>", "rmenu_check_cut"),
@@ -152,12 +152,24 @@ class PyShellEditorWindow(EditorWindow):
         ("Clear Breakpoint", "<<clear-breakpoint-here>>", None)
     ]
 
+    def color_breakpoint_text(self, color=True):
+        "Turn colorizing of breakpoint text on or off"
+        if self.io is None:
+            # possible due to update in restore_file_breaks
+            return
+        if color:
+            theme = idleConf.GetOption('main','Theme','name')
+            cfg = idleConf.GetHighlight(theme, "break")
+        else:
+            cfg = {'foreground': '', 'background': ''}
+        self.text.tag_config('BREAK', cfg)
+
     def set_breakpoint(self, lineno):
         text = self.text
         filename = self.io.filename
         text.tag_add("BREAK", "%d.0" % lineno, "%d.0" % (lineno+1))
         try:
-            i = self.breakpoints.index(lineno)
+            self.breakpoints.index(lineno)
         except ValueError:  # only add if missing, i.e. do once
             self.breakpoints.append(lineno)
         try:    # update the subprocess debugger
@@ -221,13 +233,8 @@ class PyShellEditorWindow(EditorWindow):
         #     This is necessary to keep the saved breaks synched with the
         #     saved file.
         #
-        #     Breakpoints are set as tagged ranges in the text.  Certain
-        #     kinds of edits cause these ranges to be deleted: Inserting
-        #     or deleting a line just before a breakpoint, and certain
-        #     deletions prior to a breakpoint.  These issues need to be
-        #     investigated and understood.  It's not clear if they are
-        #     Tk issues or IDLE issues, or whether they can actually
-        #     be fixed.  Since a modified file has to be saved before it is
+        #     Breakpoints are set as tagged ranges in the text.
+        #     Since a modified file has to be saved before it is
         #     run, and since self.breakpoints (from which the subprocess
         #     debugger is loaded) is updated during the save, the visible
         #     breaks stay synched with the subprocess even if one of these
@@ -430,7 +437,7 @@ class ModifiedInterpreter(InteractiveInterpreter):
             try:
                 self.rpcclt = MyRPCClient(addr)
                 break
-            except socket.error as err:
+            except socket.error:
                 pass
         else:
             self.display_port_binding_error()
@@ -451,7 +458,7 @@ class ModifiedInterpreter(InteractiveInterpreter):
         self.rpcclt.listening_sock.settimeout(10)
         try:
             self.rpcclt.accept()
-        except socket.timeout as err:
+        except socket.timeout:
             self.display_no_subprocess_error()
             return None
         self.rpcclt.register("console", self.tkconsole)
@@ -486,7 +493,7 @@ class ModifiedInterpreter(InteractiveInterpreter):
         self.spawn_subprocess()
         try:
             self.rpcclt.accept()
-        except socket.timeout as err:
+        except socket.timeout:
             self.display_no_subprocess_error()
             return None
         self.transfer_path(with_cwd=with_cwd)
@@ -504,7 +511,7 @@ class ModifiedInterpreter(InteractiveInterpreter):
         # restart subprocess debugger
         if debug:
             # Restarted debugger connects to current instance of debug GUI
-            gui = RemoteDebugger.restart_subprocess_debugger(self.rpcclt)
+            RemoteDebugger.restart_subprocess_debugger(self.rpcclt)
             # reload remote debugger breakpoints for all PyShellEditWindows
             debug.load_breakpoints()
         self.compile.compiler.flags = self.original_compiler_flags
@@ -577,14 +584,14 @@ class ModifiedInterpreter(InteractiveInterpreter):
             console = self.tkconsole.console
             if how == "OK":
                 if what is not None:
-                    print >>console, repr(what)
+                    print(repr(what), file=console)
             elif how == "EXCEPTION":
                 if self.tkconsole.getvar("<<toggle-jit-stack-viewer>>"):
                     self.remote_stack_viewer()
             elif how == "ERROR":
                 errmsg = "PyShell.ModifiedInterpreter: Subprocess ERROR:\n"
-                print >>sys.__stderr__, errmsg, what
-                print >>console, errmsg, what
+                print(errmsg, what, file=sys.__stderr__)
+                print(errmsg, what, file=console)
             # we received a response to the currently active seq number:
             try:
                 self.tkconsole.endexecuting()
@@ -645,12 +652,12 @@ class ModifiedInterpreter(InteractiveInterpreter):
         if source is None:
             source = open(filename, "r").read()
         try:
-            code = compile(source, filename, "exec")
+            code = compile(source, filename, "exec", dont_inherit=True)
         except (OverflowError, SyntaxError):
             self.tkconsole.resetoutput()
-            tkerr = self.tkconsole.stderr
-            print>>tkerr, '*** Error in script or command!\n'
-            print>>tkerr, 'Traceback (most recent call last):'
+            print('*** Error in script or command!\n'
+                  'Traceback (most recent call last):',
+                  file=self.tkconsole.stderr)
             InteractiveInterpreter.showsyntaxerror(self, filename)
             self.tkconsole.showprompt()
         else:
@@ -662,10 +669,11 @@ class ModifiedInterpreter(InteractiveInterpreter):
         self.more = 0
         self.save_warnings_filters = warnings.filters[:]
         warnings.filterwarnings(action="error", category=SyntaxWarning)
-        if isinstance(source, types.UnicodeType):
-            from idlelib import IOBinding
+        if isinstance(source, unicode) and IOBinding.encoding != 'utf-8':
             try:
-                source = source.encode(IOBinding.encoding)
+                source = '# -*- coding: %s -*-\n%s' % (
+                        IOBinding.encoding,
+                        source.encode(IOBinding.encoding))
             except UnicodeError:
                 self.tkconsole.resetoutput()
                 self.write("Unsupported characters in input\n")
@@ -800,14 +808,14 @@ class ModifiedInterpreter(InteractiveInterpreter):
                 raise
         except:
             if use_subprocess:
-                print >>self.tkconsole.stderr, \
-                         "IDLE internal error in runcode()"
+                print("IDLE internal error in runcode()",
+                      file=self.tkconsole.stderr)
                 self.showtraceback()
                 self.tkconsole.endexecuting()
             else:
                 if self.tkconsole.canceled:
                     self.tkconsole.canceled = False
-                    print >>self.tkconsole.stderr, "KeyboardInterrupt"
+                    print("KeyboardInterrupt", file=self.tkconsole.stderr)
                 else:
                     self.showtraceback()
         finally:
@@ -862,12 +870,9 @@ class PyShell(OutputWindow):
         ("edit", "_Edit"),
         ("debug", "_Debug"),
         ("options", "_Options"),
-        ("windows", "_Windows"),
+        ("windows", "_Window"),
         ("help", "_Help"),
     ]
-
-    if sys.platform == "darwin":
-        menu_specs[-2] = ("windows", "_Window")
 
 
     # New classes
@@ -1240,7 +1245,7 @@ class PyShell(OutputWindow):
         while i > 0 and line[i-1] in " \t":
             i = i-1
         line = line[:i]
-        more = self.interp.runsource(line)
+        self.interp.runsource(line)
 
     def open_stack_viewer(self, event=None):
         if self.interp.rpcclt:
@@ -1254,7 +1259,7 @@ class PyShell(OutputWindow):
                 master=self.text)
             return
         from idlelib.StackViewer import StackBrowser
-        sv = StackBrowser(self.root, self.flist)
+        StackBrowser(self.root, self.flist)
 
     def view_restart_mark(self, event=None):
         self.text.see("iomark")
@@ -1341,7 +1346,7 @@ class PseudoOutputFile(PseudoFile):
         if type(s) not in (unicode, str, bytearray):
             # See issue #19481
             if isinstance(s, unicode):
-                s = unicode.__getslice__(s, None, None)
+                s = unicode.__getitem__(s, slice(None))
             elif isinstance(s, str):
                 s = str.__str__(s)
             elif isinstance(s, bytearray):
@@ -1470,8 +1475,7 @@ def main():
     try:
         opts, args = getopt.getopt(sys.argv[1:], "c:deihnr:st:")
     except getopt.error as msg:
-        sys.stderr.write("Error: %s\n" % str(msg))
-        sys.stderr.write(usage_msg)
+        print("Error: %s\n%s" % (msg, usage_msg), file=sys.stderr)
         sys.exit(2)
     for o, a in opts:
         if o == '-c':
@@ -1494,7 +1498,7 @@ def main():
             if os.path.isfile(script):
                 pass
             else:
-                print "No script file: ", script
+                print("No script file: ", script, file=sys.stderr)
                 sys.exit()
             enable_shell = True
         if o == '-s':

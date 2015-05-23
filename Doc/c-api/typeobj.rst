@@ -770,7 +770,7 @@ set.
    exception may or may not be set.  When another error occurs, it must return
    *NULL* too.  Its presence normally signals that the instances of this type
    are iterators (although classic instances always have this function, even if
-   they don't define a :meth:`next` method).
+   they don't define a :meth:`~iterator.next` method).
 
    Iterator types should also define the :c:member:`~PyTypeObject.tp_iter` function, and that
    function should return the iterator instance itself (not a new iterator
@@ -1295,7 +1295,8 @@ Sequence Object Structures
 
    This function is used by :c:func:`PySequence_Repeat` and has the same
    signature.  It is also used by the ``*`` operator, after trying numeric
-   multiplication via the :c:member:`~PyTypeObject.tp_as_number.nb_mul` slot.
+   multiplication via the :c:member:`~PyTypeObject.tp_as_number.nb_multiply`
+   slot.
 
 .. c:member:: ssizeargfunc PySequenceMethods.sq_item
 

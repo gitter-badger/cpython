@@ -6,7 +6,6 @@
 #     which will only understand the local convention.
 
 import os
-import types
 import pipes
 import sys
 import codecs
@@ -19,11 +18,7 @@ from SimpleDialog import SimpleDialog
 
 from idlelib.configHandler import idleConf
 
-try:
-    from codecs import BOM_UTF8
-except ImportError:
-    # only available since Python 2.3
-    BOM_UTF8 = '\xef\xbb\xbf'
+from codecs import BOM_UTF8
 
 # Try setting the locale, so that we can find out
 # what encoding to use
@@ -72,6 +67,7 @@ else:
 encoding = encoding.lower()
 
 coding_re = re.compile(r'^[ \t\f]*#.*coding[:=][ \t]*([-\w.]+)')
+blank_re = re.compile(r'^[ \t\f]*(?:[#\r\n]|$)')
 
 class EncodingMessage(SimpleDialog):
     "Inform user that an encoding declaration is needed."
@@ -130,6 +126,8 @@ def coding_spec(str):
         match = coding_re.match(line)
         if match is not None:
             break
+        if not blank_re.match(line):
+            return None
     else:
         return None
     name = match.group(1)
@@ -392,7 +390,7 @@ class IOBinding:
             return False
 
     def encode(self, chars):
-        if isinstance(chars, types.StringType):
+        if isinstance(chars, str):
             # This is either plain ASCII, or Tk was returning mixed-encoding
             # text to us. Don't try to guess further.
             return chars
@@ -529,6 +527,8 @@ class IOBinding:
         ("All files", "*"),
         ]
 
+    defaultextension = '.py' if sys.platform == 'darwin' else ''
+
     def askopenfile(self):
         dir, base = self.defaultfilename("open")
         if not self.opendialog:
@@ -554,8 +554,10 @@ class IOBinding:
     def asksavefile(self):
         dir, base = self.defaultfilename("save")
         if not self.savedialog:
-            self.savedialog = tkFileDialog.SaveAs(master=self.text,
-                                                  filetypes=self.filetypes)
+            self.savedialog = tkFileDialog.SaveAs(
+                    master=self.text,
+                    filetypes=self.filetypes,
+                    defaultextension=self.defaultextension)
         filename = self.savedialog.show(initialdir=dir, initialfile=base)
         if isinstance(filename, unicode):
             filename = filename.encode(filesystemencoding)
@@ -565,16 +567,17 @@ class IOBinding:
         "Update recent file list on all editor windows"
         self.editwin.update_recent_files_list(filename)
 
-def test():
+def _io_binding(parent):  # htest #
     root = Tk()
+    root.title("Test IOBinding")
+    width, height, x, y = list(map(int, re.split('[x+]', parent.geometry())))
+    root.geometry("+%d+%d"%(x, y + 150))
     class MyEditWin:
         def __init__(self, text):
             self.text = text
             self.flist = None
             self.text.bind("<Control-o>", self.open)
             self.text.bind("<Control-s>", self.save)
-            self.text.bind("<Alt-s>", self.save_as)
-            self.text.bind("<Alt-z>", self.save_a_copy)
         def get_saved(self): return 0
         def set_saved(self, flag): pass
         def reset_undo(self): pass
@@ -582,16 +585,13 @@ def test():
             self.text.event_generate("<<open-window-from-file>>")
         def save(self, event):
             self.text.event_generate("<<save-window>>")
-        def save_as(self, event):
-            self.text.event_generate("<<save-window-as-file>>")
-        def save_a_copy(self, event):
-            self.text.event_generate("<<save-copy-of-window-as-file>>")
+
     text = Text(root)
     text.pack()
     text.focus_set()
     editwin = MyEditWin(text)
-    io = IOBinding(editwin)
-    root.mainloop()
+    IOBinding(editwin)
 
 if __name__ == "__main__":
-    test()
+    from idlelib.idle_test.htest import run
+    run(_io_binding)

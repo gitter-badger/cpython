@@ -250,7 +250,9 @@ class PyBuildExt(build_ext):
 
         build_ext.build_extensions(self)
 
-        longest = max([len(e.name) for e in self.extensions])
+        longest = 0
+        if self.extensions:
+            longest = max([len(e.name) for e in self.extensions])
         if self.failed:
             longest = max(longest, max([len(name) for name in self.failed]))
 
@@ -694,7 +696,7 @@ class PyBuildExt(build_ext):
         exts.append( Extension('audioop', ['audioop.c']) )
 
         # Disabled on 64-bit platforms
-        if sys.maxint != 9223372036854775807L:
+        if sys.maxsize != 9223372036854775807L:
             # Operations on images
             exts.append( Extension('imageop', ['imageop.c']) )
         else:
@@ -733,7 +735,9 @@ class PyBuildExt(build_ext):
         if host_platform == 'darwin':
             os_release = int(os.uname()[2].split('.')[0])
             dep_target = sysconfig.get_config_var('MACOSX_DEPLOYMENT_TARGET')
-            if dep_target and dep_target.split('.') < ['10', '5']:
+            if (dep_target and
+                    (tuple(int(n) for n in dep_target.split('.')[0:2])
+                        < (10, 5) ) ):
                 os_release = 8
             if os_release < 9:
                 # MacOSX 10.4 has a broken readline. Don't try to build
@@ -1339,13 +1343,17 @@ class PyBuildExt(build_ext):
         # Curses support, requiring the System V version of curses, often
         # provided by the ncurses library.
         panel_library = 'panel'
+        curses_incs = None
         if curses_library.startswith('ncurses'):
             if curses_library == 'ncursesw':
                 # Bug 1464056: If _curses.so links with ncursesw,
                 # _curses_panel.so must link with panelw.
                 panel_library = 'panelw'
             curses_libs = [curses_library]
+            curses_incs = find_file('curses.h', inc_dirs,
+                                    [os.path.join(d, 'ncursesw') for d in inc_dirs])
             exts.append( Extension('_curses', ['_cursesmodule.c'],
+                                   include_dirs = curses_incs,
                                    libraries = curses_libs) )
         elif curses_library == 'curses' and host_platform != 'darwin':
                 # OSX has an old Berkeley curses, not good enough for
@@ -1366,6 +1374,7 @@ class PyBuildExt(build_ext):
         if (module_enabled(exts, '_curses') and
             self.compiler.find_library_file(lib_dirs, panel_library)):
             exts.append( Extension('_curses_panel', ['_curses_panel.c'],
+                                   include_dirs = curses_incs,
                                    libraries = [panel_library] + curses_libs) )
         else:
             missing.append('_curses_panel')

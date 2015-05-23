@@ -28,7 +28,8 @@ except ImportError:
 __all__ = ["Error", "TestFailed", "ResourceDenied", "import_module",
            "verbose", "use_resources", "max_memuse", "record_original_stdout",
            "get_original_stdout", "unload", "unlink", "rmtree", "forget",
-           "is_resource_enabled", "requires", "find_unused_port", "bind_port",
+           "is_resource_enabled", "requires", "requires_mac_ver",
+           "find_unused_port", "bind_port",
            "fcmp", "have_unicode", "is_jython", "TESTFN", "HOST", "FUZZ",
            "SAVEDCWD", "temp_cwd", "findfile", "sortdict", "check_syntax_error",
            "open_urlresource", "check_warnings", "check_py3k_warnings",
@@ -36,10 +37,10 @@ __all__ = ["Error", "TestFailed", "ResourceDenied", "import_module",
            "captured_stdout", "TransientResource", "transient_internet",
            "run_with_locale", "set_memlimit", "bigmemtest", "bigaddrspacetest",
            "BasicTestRunner", "run_unittest", "run_doctest", "threading_setup",
-           "threading_cleanup", "reap_children", "cpython_only",
+           "threading_cleanup", "reap_threads", "start_threads", "cpython_only",
            "check_impl_detail", "get_attribute", "py3k_bytes",
            "import_fresh_module", "threading_cleanup", "reap_children",
-           "strip_python_stderr"]
+           "strip_python_stderr", "IPV6_ENABLED"]
 
 class Error(Exception):
     """Base class for regression test exceptions."""
@@ -270,12 +271,16 @@ def forget(modname):
         # is exited) but there is a .pyo file.
         unlink(os.path.join(dirname, modname + os.extsep + 'pyo'))
 
-# On some platforms, should not run gui test even if it is allowed
-# in `use_resources'.
-if sys.platform.startswith('win'):
-    import ctypes
-    import ctypes.wintypes
-    def _is_gui_available():
+# Check whether a gui is actually available
+def _is_gui_available():
+    if hasattr(_is_gui_available, 'result'):
+        return _is_gui_available.result
+    reason = None
+    if sys.platform.startswith('win'):
+        # if Python is running as a service (such as the buildbot service),
+        # gui interaction may be disallowed
+        import ctypes
+        import ctypes.wintypes
         UOI_FLAGS = 1
         WSF_VISIBLE = 0x0001
         class USEROBJECTFLAGS(ctypes.Structure):
@@ -295,31 +300,94 @@ if sys.platform.startswith('win'):
             ctypes.byref(needed))
         if not res:
             raise ctypes.WinError()
-        return bool(uof.dwFlags & WSF_VISIBLE)
-else:
-    def _is_gui_available():
-        return True
+        if not bool(uof.dwFlags & WSF_VISIBLE):
+            reason = "gui not available (WSF_VISIBLE flag not set)"
+    elif sys.platform == 'darwin':
+        # The Aqua Tk implementations on OS X can abort the process if
+        # being called in an environment where a window server connection
+        # cannot be made, for instance when invoked by a buildbot or ssh
+        # process not running under the same user id as the current console
+        # user.  To avoid that, raise an exception if the window manager
+        # connection is not available.
+        from ctypes import cdll, c_int, pointer, Structure
+        from ctypes.util import find_library
+
+        app_services = cdll.LoadLibrary(find_library("ApplicationServices"))
+
+        if app_services.CGMainDisplayID() == 0:
+            reason = "gui tests cannot run without OS X window manager"
+        else:
+            class ProcessSerialNumber(Structure):
+                _fields_ = [("highLongOfPSN", c_int),
+                            ("lowLongOfPSN", c_int)]
+            psn = ProcessSerialNumber()
+            psn_p = pointer(psn)
+            if (  (app_services.GetCurrentProcess(psn_p) < 0) or
+                  (app_services.SetFrontProcess(psn_p) < 0) ):
+                reason = "cannot run without OS X gui process"
+
+    # check on every platform whether tkinter can actually do anything
+    if not reason:
+        try:
+            from Tkinter import Tk
+            root = Tk()
+            root.update()
+            root.destroy()
+        except Exception as e:
+            err_string = str(e)
+            if len(err_string) > 50:
+                err_string = err_string[:50] + ' [...]'
+            reason = 'Tk unavailable due to {}: {}'.format(type(e).__name__,
+                                                           err_string)
+
+    _is_gui_available.reason = reason
+    _is_gui_available.result = not reason
+
+    return _is_gui_available.result
 
 def is_resource_enabled(resource):
-    """Test whether a resource is enabled.  Known resources are set by
-    regrtest.py."""
-    return use_resources is not None and resource in use_resources
+    """Test whether a resource is enabled.
+
+    Known resources are set by regrtest.py.  If not running under regrtest.py,
+    all resources are assumed enabled unless use_resources has been set.
+    """
+    return use_resources is None or resource in use_resources
 
 def requires(resource, msg=None):
-    """Raise ResourceDenied if the specified resource is not available.
-
-    If the caller's module is __main__ then automatically return True.  The
-    possibility of False being returned occurs when regrtest.py is executing."""
+    """Raise ResourceDenied if the specified resource is not available."""
     if resource == 'gui' and not _is_gui_available():
-        raise unittest.SkipTest("Cannot use the 'gui' resource")
-    # see if the caller's module is __main__ - if so, treat as if
-    # the resource was set
-    if sys._getframe(1).f_globals.get("__name__") == "__main__":
-        return
+        raise ResourceDenied(_is_gui_available.reason)
     if not is_resource_enabled(resource):
         if msg is None:
             msg = "Use of the `%s' resource not enabled" % resource
         raise ResourceDenied(msg)
+
+def requires_mac_ver(*min_version):
+    """Decorator raising SkipTest if the OS is Mac OS X and the OS X
+    version if less than min_version.
+
+    For example, @requires_mac_ver(10, 5) raises SkipTest if the OS X version
+    is lesser than 10.5.
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kw):
+            if sys.platform == 'darwin':
+                version_txt = platform.mac_ver()[0]
+                try:
+                    version = tuple(map(int, version_txt.split('.')))
+                except ValueError:
+                    pass
+                else:
+                    if version < min_version:
+                        min_version_txt = '.'.join(map(str, min_version))
+                        raise unittest.SkipTest(
+                            "Mac OS X %s or higher required, not %s"
+                            % (min_version_txt, version_txt))
+            return func(*args, **kw)
+        wrapper.min_version = min_version
+        return wrapper
+    return decorator
 
 
 # Don't use "localhost", since resolving it uses the DNS under recent
@@ -424,6 +492,36 @@ def bind_port(sock, host=HOST):
     port = sock.getsockname()[1]
     return port
 
+def _is_ipv6_enabled():
+    """Check whether IPv6 is enabled on this host."""
+    if socket.has_ipv6:
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+            sock.bind((HOSTv6, 0))
+            return True
+        except socket.error:
+            pass
+        finally:
+            if sock:
+                sock.close()
+    return False
+
+IPV6_ENABLED = _is_ipv6_enabled()
+
+def system_must_validate_cert(f):
+    """Skip the test on TLS certificate validation failures."""
+    @functools.wraps(f)
+    def dec(*args, **kwargs):
+        try:
+            f(*args, **kwargs)
+        except IOError as e:
+            if "CERTIFICATE_VERIFY_FAILED" in str(e):
+                raise unittest.SkipTest("system does not contain "
+                                        "necessary certificates")
+            raise
+    return dec
+
 FUZZ = 1e-6
 
 def fcmp(x, y): # fuzzy comparison function
@@ -457,13 +555,18 @@ PIPE_MAX_SIZE = 4 * 1024 * 1024 + 1
 # for a discussion of this number).
 SOCK_MAX_SIZE = 16 * 1024 * 1024 + 1
 
+is_jython = sys.platform.startswith('java')
+
 try:
     unicode
     have_unicode = True
 except NameError:
     have_unicode = False
 
-is_jython = sys.platform.startswith('java')
+requires_unicode = unittest.skipUnless(have_unicode, 'no unicode support')
+
+def u(s):
+    return unicode(s, 'unicode-escape')
 
 # FS_NONASCII: non-ASCII Unicode character encodable by
 # sys.getfilesystemencoding(), or None if there is no such character.
@@ -1213,7 +1316,7 @@ def _id(obj):
 
 def requires_resource(resource):
     if resource == 'gui' and not _is_gui_available():
-        return unittest.skip("resource 'gui' is not available")
+        return unittest.skip(_is_gui_available.reason)
     if is_resource_enabled(resource):
         return _id
     else:
@@ -1404,6 +1507,39 @@ def reap_children():
                     break
             except:
                 break
+
+@contextlib.contextmanager
+def start_threads(threads, unlock=None):
+    threads = list(threads)
+    started = []
+    try:
+        try:
+            for t in threads:
+                t.start()
+                started.append(t)
+        except:
+            if verbose:
+                print("Can't start %d threads, only %d threads started" %
+                      (len(threads), len(started)))
+            raise
+        yield
+    finally:
+        if unlock:
+            unlock()
+        endtime = starttime = time.time()
+        for timeout in range(1, 16):
+            endtime += 60
+            for t in started:
+                t.join(max(endtime - time.time(), 0.01))
+            started = [t for t in started if t.isAlive()]
+            if not started:
+                break
+            if verbose:
+                print('Unable to join %d threads during a period of '
+                      '%d minutes' % (len(started), timeout))
+    started = [t for t in started if t.isAlive()]
+    if started:
+        raise AssertionError('Unable to join %d threads' % len(started))
 
 @contextlib.contextmanager
 def swap_attr(obj, attr, new_val):

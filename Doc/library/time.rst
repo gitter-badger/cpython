@@ -222,12 +222,13 @@ The module defines the following functions and data items:
 
 .. function:: sleep(secs)
 
-   Suspend execution for the given number of seconds.  The argument may be a
-   floating point number to indicate a more precise sleep time. The actual
-   suspension time may be less than that requested because any caught signal will
-   terminate the :func:`sleep` following execution of that signal's catching
-   routine.  Also, the suspension time may be longer than requested by an arbitrary
-   amount because of the scheduling of other activity in the system.
+   Suspend execution of the current thread for the given number of seconds.
+   The argument may be a floating point number to indicate a more precise sleep
+   time. The actual suspension time may be less than that requested because any
+   caught signal will terminate the :func:`sleep` following execution of that
+   signal's catching routine.  Also, the suspension time may be longer than
+   requested by an arbitrary amount because of the scheduling of other activity
+   in the system.
 
 
 .. function:: strftime(format[, t])
@@ -236,7 +237,9 @@ The module defines the following functions and data items:
    :func:`gmtime` or :func:`localtime` to a string as specified by the *format*
    argument.  If *t* is not provided, the current time as returned by
    :func:`localtime` is used.  *format* must be a string.  :exc:`ValueError` is
-   raised if any field in *t* is outside of the allowed range.
+   raised if any field in *t* is outside of the allowed range. :func:`strftime`
+   returns a locale depedent byte string; the result may be converted to unicode
+   by doing ``strftime(<myformat>).decode(locale.getlocale()[1])``.
 
    .. versionchanged:: 2.1
       Allowed *t* to be omitted.
@@ -246,7 +249,7 @@ The module defines the following functions and data items:
 
    .. versionchanged:: 2.5
       0 is now a legal argument for any position in the time tuple; if it is normally
-      illegal the value is forced to a correct one..
+      illegal the value is forced to a correct one.
 
    The following directives can be embedded in the *format* string. They are shown
    without the optional field width and precision specification, and are replaced

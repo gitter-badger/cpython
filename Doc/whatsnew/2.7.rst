@@ -68,9 +68,9 @@ included in 2.7.
 This article doesn't attempt to provide a complete specification of
 the new features, but instead provides a convenient overview.  For
 full details, you should refer to the documentation for Python 2.7 at
-http://docs.python.org. If you want to understand the rationale for
+https://docs.python.org. If you want to understand the rationale for
 the design and implementation, refer to the PEP for a particular new
-feature or the issue on http://bugs.python.org in which a change was
+feature or the issue on https://bugs.python.org in which a change was
 discussed.  Whenever possible, "What's New in Python" links to the
 bug/patch item for each change.
 
@@ -79,45 +79,91 @@ bug/patch item for each change.
 The Future for Python 2.x
 =========================
 
-Python 2.7 is intended to be the last major release in the 2.x series.
-The Python maintainers are planning to focus their future efforts on
-the Python 3.x series.
+Python 2.7 is the last major release in the 2.x series, as the Python
+maintainers have shifted the focus of their new feature development efforts
+to the Python 3.x series. This means that while Python 2 continues to
+receive bug fixes, and to be updated to build correctly on new hardware and
+versions of supported operated systems, there will be no new full feature
+releases for the language or standard library.
 
-This means that 2.7 will remain in place for a long time, running
-production systems that have not been ported to Python 3.x.
-Two consequences of the long-term significance of 2.7 are:
+However, while there is a large common subset between Python 2.7 and Python
+3, and many of the changes involved in migrating to that common subset, or
+directly to Python 3, can be safely automated, some other changes (notably
+those associated with Unicode handling) may require careful consideration,
+and preferably robust automated regression test suites, to migrate
+effectively.
 
-* It's very likely the 2.7 release will have a longer period of
-  maintenance compared to earlier 2.x versions.  Python 2.7 will
-  continue to be maintained while the transition to 3.x continues, and
-  the developers are planning to support Python 2.7 with bug-fix
-  releases beyond the typical two years.
+This means that Python 2.7 will remain in place for a long time, providing a
+stable and supported base platform for production systems that have not yet
+been ported to Python 3. The full expected lifecycle of the Python 2.7
+series is detailed in :pep:`373`.
 
-* A policy decision was made to silence warnings only of interest to
-  developers.  :exc:`DeprecationWarning` and its
-  descendants are now ignored unless otherwise requested, preventing
-  users from seeing warnings triggered by an application.  This change
-  was also made in the branch that will become Python 3.2. (Discussed
-  on stdlib-sig and carried out in :issue:`7319`.)
+Some key consequences of the long-term significance of 2.7 are:
 
-  In previous releases, :exc:`DeprecationWarning` messages were
-  enabled by default, providing Python developers with a clear
-  indication of where their code may break in a future major version
-  of Python.
+* As noted above, the 2.7 release has a much longer period of maintenance
+  when compared to earlier 2.x versions. Python 2.7 is currently expected to
+  remain supported by the core development team (receiving security updates
+  and other bug fixes) until at least 2020 (10 years after its initial
+  release, compared to the more typical support period of 18-24 months).
 
-  However, there are increasingly many users of Python-based
-  applications who are not directly involved in the development of
-  those applications.  :exc:`DeprecationWarning` messages are
-  irrelevant to such users, making them worry about an application
-  that's actually working correctly and burdening application developers
-  with responding to these concerns.
+* As the Python 2.7 standard library ages, making effective use of the
+  Python Package Index (either directly or via a redistributor) becomes
+  more important for Python 2 users. In addition to a wide variety of third
+  party packages for various tasks, the available packages include backports
+  of new modules and features from the Python 3 standard library that are
+  compatible with Python 2, as well as various tools and libraries that can
+  make it easier to migrate to Python 3. The `Python Packaging User Guide
+  <https://packaging.python.org>`__ provides guidance on downloading and
+  installing software from the Python Package Index.
 
-  You can re-enable display of :exc:`DeprecationWarning` messages by
-  running Python with the :option:`-Wdefault <-W>` (short form:
-  :option:`-Wd <-W>`) switch, or by setting the :envvar:`PYTHONWARNINGS`
-  environment variable to ``"default"`` (or ``"d"``) before running
-  Python.  Python code can also re-enable them
-  by calling ``warnings.simplefilter('default')``.
+* While the preferred approach to enhancing Python 2 is now the publication
+  of new packages on the Python Package Index, this approach doesn't
+  necessarily work in all cases, especially those related to network
+  security. In exceptional cases that cannot be handled adequately by
+  publishing new or updated packages on PyPI, the Python Enhancement
+  Proposal process may be used to make the case for adding new features
+  directly to the Python 2 standard library. Any such additions, and the
+  maintenance releases where they were added, will be noted in the
+  :ref:`py27-maintenance-enhancements` section below.
+
+For projects wishing to migrate from Python 2 to Python 3, or for library
+and framework developers wishing to support users on both Python 2 and
+Python 3, there are a variety of tools and guides available to help decide
+on a suitable approach and manage some of the technical details involved.
+The recommended starting point is the :ref:`pyporting-howto` HOWTO guide.
+
+
+Changes to the Handling of Deprecation Warnings
+===============================================
+
+For Python 2.7, a policy decision was made to silence warnings only of
+interest to developers by default.  :exc:`DeprecationWarning` and its
+descendants are now ignored unless otherwise requested, preventing
+users from seeing warnings triggered by an application.  This change
+was also made in the branch that became Python 3.2. (Discussed
+on stdlib-sig and carried out in :issue:`7319`.)
+
+In previous releases, :exc:`DeprecationWarning` messages were
+enabled by default, providing Python developers with a clear
+indication of where their code may break in a future major version
+of Python.
+
+However, there are increasingly many users of Python-based
+applications who are not directly involved in the development of
+those applications.  :exc:`DeprecationWarning` messages are
+irrelevant to such users, making them worry about an application
+that's actually working correctly and burdening application developers
+with responding to these concerns.
+
+You can re-enable display of :exc:`DeprecationWarning` messages by
+running Python with the :option:`-Wdefault <-W>` (short form:
+:option:`-Wd <-W>`) switch, or by setting the :envvar:`PYTHONWARNINGS`
+environment variable to ``"default"`` (or ``"d"``) before running
+Python.  Python code can also re-enable them
+by calling ``warnings.simplefilter('default')``.
+
+The ``unittest`` module also automatically reenables deprecation warnings
+when running tests.
 
 
 Python 3.1 Features
@@ -662,7 +708,7 @@ Some smaller changes made to the core Python language are:
   The :func:`contextlib.nested` function provides a very similar
   function, so it's no longer necessary and has been deprecated.
 
-  (Proposed in http://codereview.appspot.com/53094; implemented by
+  (Proposed in https://codereview.appspot.com/53094; implemented by
   Georg Brandl.)
 
 * Conversions between floating-point numbers and strings are
@@ -1566,7 +1612,7 @@ changes, or look through the Subversion logs for all the details.
   resulting archive.  This is more powerful than the existing
   *exclude* argument, which has therefore been deprecated.
   (Added by Lars Gustäbel; :issue:`6856`.)
-  The :class:`~tarfile.TarFile` class also now supports the context manager protocol.
+  The :class:`~tarfile.TarFile` class also now supports the context management protocol.
   (Added by Lars Gustäbel; :issue:`7232`.)
 
 * The :meth:`~threading.Event.wait` method of the :class:`threading.Event` class
@@ -1721,7 +1767,7 @@ a complete list of functions.
 
 The Distutils package and :mod:`sysconfig` are now maintained by Tarek
 Ziadé, who has also started a Distutils2 package (source repository at
-http://hg.python.org/distutils2/) for developing a next-generation
+https://hg.python.org/distutils2/) for developing a next-generation
 version of Distutils.
 
 
@@ -1758,7 +1804,7 @@ new features were added.  Most of these features were implemented
 by Michael Foord, unless otherwise noted.  The enhanced version of
 the module is downloadable separately for use with Python versions 2.4 to 2.6,
 packaged as the :mod:`unittest2` package, from
-http://pypi.python.org/pypi/unittest2.
+https://pypi.python.org/pypi/unittest2.
 
 When used from the command line, the module can automatically discover
 tests.  It's not as fancy as `py.test <http://pytest.org>`__ or
@@ -2463,6 +2509,168 @@ For applications that embed Python:
 
 .. ======================================================================
 
+
+.. _py27-maintenance-enhancements:
+
+New Features Added to Python 2.7 Maintenance Releases
+=====================================================
+
+New features may be added to Python 2.7 maintenance releases when the
+situation genuinely calls for it. Any such additions must go through
+the Python Enhancement Proposal process, and make a compelling case for why
+they can't be adequately addressed by either adding the new feature solely to
+Python 3, or else by publishing it on the Python Package Index.
+
+In addition to the specific proposals listed below, there is a general
+exemption allowing new ``-3`` warnings to be added in any Python 2.7
+maintenance release.
+
+
+PEP 434: IDLE Enhancement Exception for All Branches
+----------------------------------------------------
+
+:pep:`434` describes a general exemption for changes made to the IDLE
+development environment shipped along with Python. This exemption makes it
+possible for the IDLE developers to provide a more consistent user
+experience across all supported versions of Python 2 and 3.
+
+For details of any IDLE changes, refer to the NEWS file for the specific
+release.
+
+
+PEP 466: Network Security Enhancements for Python 2.7
+-----------------------------------------------------
+
+:pep:`466` describes a number of network security enhancement proposals
+that have been approved for inclusion in Python 2.7 maintenance releases,
+with the first of those changes appearing in the Python 2.7.7 release.
+
+:pep:`466` related features added in Python 2.7.7:
+
+* :func:`hmac.compare_digest` was backported from Python 3 to make a timing
+  attack resistant comparison operation available to Python 2 applications.
+  (Contributed by Alex Gaynor; :issue:`21306`.)
+
+* OpenSSL 1.0.1g was upgraded in the official Windows installers published on
+  python.org. (Contributed by Zachary Ware; :issue:`21462`.)
+
+:pep:`466` related features added in Python 2.7.8:
+
+* :func:`hashlib.pbkdf2_hmac` was backported from Python 3 to make a hashing
+  algorithm suitable for secure password storage broadly available to Python
+  2 applications. (Contributed by Alex Gaynor; :issue:`21304`.)
+
+* OpenSSL 1.0.1h was upgraded for the official Windows installers published on
+  python.org. (contributed by Zachary Ware in :issue:`21671` for CVE-2014-0224)
+
+:pep:`466` related features added in Python 2.7.9:
+
+* Most of Python 3.4's :mod:`ssl` module was backported. This means :mod:`ssl`
+  now supports Server Name Indication, TLS1.x settings, access to the platform
+  certificate store, the :class:`~ssl.SSLContext` class, and other
+  features. (Contributed by Alex Gaynor and David Reid; :issue:`21308`.)
+
+  Refer to the "Version added: 2.7.9" notes in the module documentation for
+  specific details.
+
+* :func:`os.urandom` was changed to cache a file descriptor to ``/dev/urandom``
+  instead of reopening ``/dev/urandom`` on every call. (Contributed by Alex
+  Gaynor; :issue:`21305`.)
+
+* :data:`hashlib.algorithms_guaranteed` and
+  :data:`hashlib.algorithms_available` were backported from Python 3 to make
+  it easier for Python 2 applications to select the strongest available hash
+  algorithm. (Contributed by Alex Gaynor in :issue:`21307`)
+
+
+PEP 477: Backport ensurepip (PEP 453) to Python 2.7
+---------------------------------------------------
+
+:pep:`477` approves the inclusion of the :pep:`453` ensurepip module and the
+improved documentation that was enabled by it in the Python 2.7 maintenance
+releases, appearing first in the the Python 2.7.9 release.
+
+
+Bootstrapping pip By Default
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The new :mod:`ensurepip` module (defined in :pep:`453`) provides a standard
+cross-platform mechanism to bootstrap the pip installer into Python
+installations. The version of ``pip`` included with Python 2.7.9 is ``pip``
+1.5.6, and future 2.7.x maintenance releases will update the bundled version to
+the latest version of ``pip`` that is available at the time of creating the
+release candidate.
+
+By default, the commands ``pip``, ``pipX`` and ``pipX.Y`` will be installed on
+all platforms (where X.Y stands for the version of the Python installation),
+along with the ``pip`` Python package and its dependencies.
+
+For CPython :ref:`source builds on POSIX systems <building-python-on-unix>`,
+the ``make install`` and ``make altinstall`` commands do not bootstrap ``pip``
+by default.  This behaviour can be controlled through configure options, and
+overridden through Makefile options.
+
+On Windows and Mac OS X, the CPython installers now default to installing
+``pip`` along with CPython itself (users may opt out of installing it
+during the installation process). Window users will need to opt in to the
+automatic ``PATH`` modifications to have ``pip`` available from the command
+line by default, otherwise it can still be accessed through the Python
+launcher for Windows as ``py -m pip``.
+
+As `discussed in the PEP`__, platform packagers may choose not to install
+these commands by default, as long as, when invoked, they provide clear and
+simple directions on how to install them on that platform (usually using
+the system package manager).
+
+__ https://www.python.org/dev/peps/pep-0477/#disabling-ensurepip-by-downstream-distributors
+
+
+Documentation Changes
+~~~~~~~~~~~~~~~~~~~~~
+
+As part of this change, the :ref:`installing-index` and
+:ref:`distributing-index` sections of the documentation have been
+completely redesigned as short getting started and FAQ documents. Most
+packaging documentation has now been moved out to the Python Packaging
+Authority maintained `Python Packaging User Guide
+<http://packaging.python.org>`__ and the documentation of the individual
+projects.
+
+However, as this migration is currently still incomplete, the legacy
+versions of those guides remaining available as :ref:`install-index`
+and :ref:`distutils-index`.
+
+.. seealso::
+
+   :pep:`453` -- Explicit bootstrapping of pip in Python installations
+      PEP written by Donald Stufft and Nick Coghlan, implemented by
+      Donald Stufft, Nick Coghlan, Martin von Löwis and Ned Deily.
+
+PEP 476: Enabling certificate verification by default for stdlib http clients
+-----------------------------------------------------------------------------
+
+:mod:`httplib` and modules which use it, such as :mod:`urllib2` and
+:mod:`xmlrpclib`, will now verify that the server presents a certificate
+which is signed by a CA in the platform trust store and whose hostname matches
+the hostname being requested by default, significantly improving security for
+many applications.
+
+For applications which require the old previous behavior, they can pass an
+alternate context::
+
+    import urllib2
+    import ssl
+
+    # This disables all verification
+    context = ssl._create_unverified_context()
+
+    # This allows using a specific certificate for the host, which doesn't need
+    # to be in the trust store
+    context = ssl.create_default_context(cafile="/path/to/file.crt")
+
+    urllib2.urlopen("https://invalid-cert", context=context)
+
+.. ======================================================================
 
 .. _acks27:
 

@@ -7,7 +7,7 @@
 This HOWTO discusses Python 2.x's support for Unicode, and explains
 various problems that people commonly encounter when trying to work
 with Unicode.  For the Python 3 version, see
-<http://docs.python.org/py3k/howto/unicode.html>.
+<https://docs.python.org/3/howto/unicode.html>.
 
 Introduction to Unicode
 =======================
@@ -32,8 +32,8 @@ For a while people just wrote programs that didn't display accents.  I remember
 looking at Apple ][ BASIC programs, published in French-language publications in
 the mid-1980s, that had lines like these::
 
-   PRINT "FICHIER EST COMPLETE."
-   PRINT "CARACTERE NON ACCEPTE."
+   PRINT "MISE A JOUR TERMINEE"
+   PRINT "PARAMETRES ENREGISTRES"
 
 Those messages should contain accents, and they just look wrong to someone who
 can read French.
@@ -49,7 +49,7 @@ another and managed to catch on.
 
 255 characters aren't very many.  For example, you can't fit both the accented
 characters used in Western Europe and the Cyrillic alphabet used for Russian
-into the 128-255 range because there are more than 127 such characters.
+into the 128-255 range because there are more than 128 such characters.
 
 You could write files using different codes (all your Russian files in a coding
 system called KOI8, all your French files in a different coding system called
@@ -435,7 +435,7 @@ When you run it with Python 2.4, it will output the following warning::
     amk:~$ python2.4 p263.py
     sys:1: DeprecationWarning: Non-ASCII character '\xe9'
          in file p263.py on line 2, but no encoding declared;
-         see http://www.python.org/peps/pep-0263.html for details
+         see https://www.python.org/peps/pep-0263.html for details
 
 Python 2.5 and higher are stricter and will produce a syntax error::
 
@@ -443,7 +443,7 @@ Python 2.5 and higher are stricter and will produce a syntax error::
     File "/tmp/p263.py", line 2
     SyntaxError: Non-ASCII character '\xc3' in file /tmp/p263.py
       on line 2, but no encoding declared; see
-      http://www.python.org/peps/pep-0263.html for details
+      https://www.python.org/peps/pep-0263.html for details
 
 
 Unicode Properties
@@ -500,7 +500,7 @@ The documentation for the :mod:`codecs` module.
 
 Marc-André Lemburg gave a presentation at EuroPython 2002 titled "Python and
 Unicode".  A PDF version of his slides is available at
-<http://downloads.egenix.com/python/Unicode-EPC2002-Talk.pdf>, and is an
+<https://downloads.egenix.com/python/Unicode-EPC2002-Talk.pdf>, and is an
 excellent overview of the design of Python's Unicode features.
 
 
@@ -687,7 +687,7 @@ References
 
 The PDF slides for Marc-André Lemburg's presentation "Writing Unicode-aware
 Applications in Python" are available at
-<http://downloads.egenix.com/python/LSM2005-Developing-Unicode-aware-applications-in-Python.pdf>
+<https://downloads.egenix.com/python/LSM2005-Developing-Unicode-aware-applications-in-Python.pdf>
 and discuss questions of character encodings as well as how to internationalize
 and localize an application.
 

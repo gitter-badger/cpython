@@ -26,7 +26,7 @@ __all__ = ["Button", "Checkbutton", "Combobox", "Entry", "Frame", "Label",
            "tclobjs_to_py", "setup_master"]
 
 import Tkinter
-from Tkinter import _flatten, _join, _stringify
+from Tkinter import _flatten, _join, _stringify, _splitdict
 
 # Verify if Tk is new enough to not need the Tile package
 _REQUIRE_TILE = True if Tkinter.TkVersion < 8.5 else False
@@ -242,21 +242,6 @@ def _script_from_settings(settings):
 
     return '\n'.join(script)
 
-def _dict_from_tcltuple(ttuple, cut_minus=True):
-    """Break tuple in pairs, format it properly, then build the return
-    dict. If cut_minus is True, the supposed '-' prefixing options will
-    be removed.
-
-    ttuple is expected to contain an even number of elements."""
-    opt_start = 1 if cut_minus else 0
-
-    retdict = {}
-    it = iter(ttuple)
-    for opt, val in zip(it, it):
-        retdict[str(opt)[opt_start:]] = val
-
-    return tclobjs_to_py(retdict)
-
 def _list_from_statespec(stuple):
     """Construct a list from the given statespec tuple according to the
     accepted statespec accepted by _format_mapdict."""
@@ -274,9 +259,10 @@ def _list_from_statespec(stuple):
     it = iter(nval)
     return [_flatten(spec) for spec in zip(it, it)]
 
-def _list_from_layouttuple(ltuple):
+def _list_from_layouttuple(tk, ltuple):
     """Construct a list from the tuple returned by ttk::layout, this is
     somewhat the reverse of _format_layoutlist."""
+    ltuple = tk.splitlist(ltuple)
     res = []
 
     indx = 0
@@ -295,17 +281,14 @@ def _list_from_layouttuple(ltuple):
             indx += 2
 
             if opt == 'children':
-                if (Tkinter._default_root and
-                    not Tkinter._default_root.wantobjects()):
-                    val = Tkinter._default_root.splitlist(val)
-                val = _list_from_layouttuple(val)
+                val = _list_from_layouttuple(tk, val)
 
             opts[opt] = val
 
     return res
 
-def _val_or_dict(options, func, *args):
-    """Format options then call func with args and options and return
+def _val_or_dict(tk, options, *args):
+    """Format options then call Tk command with args and options and return
     the appropriate result.
 
     If no option is specified, a dict is returned. If a option is
@@ -313,14 +296,12 @@ def _val_or_dict(options, func, *args):
     Otherwise, the function just sets the passed options and the caller
     shouldn't be expecting a return value anyway."""
     options = _format_optdict(options)
-    res = func(*(args + options))
+    res = tk.call(*(args + options))
 
     if len(options) % 2: # option specified without a value, return its value
         return res
 
-    if Tkinter._default_root:
-        res = Tkinter._default_root.splitlist(res)
-    return _dict_from_tcltuple(res)
+    return _splitdict(tk, res, conv=_tclobj_to_py)
 
 def _convert_stringval(value):
     """Converts a value to, hopefully, a more appropriate Python object."""
@@ -340,20 +321,24 @@ def _to_number(x):
             x = int(x)
     return x
 
+def _tclobj_to_py(val):
+    """Return value converted from Tcl object to Python object."""
+    if val and hasattr(val, '__len__') and not isinstance(val, basestring):
+        if getattr(val[0], 'typename', None) == 'StateSpec':
+            val = _list_from_statespec(val)
+        else:
+            val = map(_convert_stringval, val)
+
+    elif hasattr(val, 'typename'): # some other (single) Tcl object
+        val = _convert_stringval(val)
+
+    return val
+
 def tclobjs_to_py(adict):
     """Returns adict with its values converted from Tcl objects to Python
     objects."""
-    for opt, val in adict.iteritems():
-        if val and hasattr(val, '__len__') and not isinstance(val, basestring):
-            if getattr(val[0], 'typename', None) == 'StateSpec':
-                val = _list_from_statespec(val)
-            else:
-                val = map(_convert_stringval, val)
-
-        elif hasattr(val, 'typename'): # some other (single) Tcl object
-            val = _convert_stringval(val)
-
-        adict[opt] = val
+    for opt, val in adict.items():
+        adict[opt] = _tclobj_to_py(val)
 
     return adict
 
@@ -398,7 +383,7 @@ class Style(object):
         a sequence identifying the value for that option."""
         if query_opt is not None:
             kw[query_opt] = None
-        return _val_or_dict(kw, self.tk.call, self._name, "configure", style)
+        return _val_or_dict(self.tk, kw, self._name, "configure", style)
 
 
     def map(self, style, query_opt=None, **kw):
@@ -413,8 +398,10 @@ class Style(object):
             return _list_from_statespec(self.tk.splitlist(
                 self.tk.call(self._name, "map", style, '-%s' % query_opt)))
 
-        return _dict_from_tcltuple(
-            self.tk.call(self._name, "map", style, *(_format_mapdict(kw))))
+        return _splitdict(
+            self.tk,
+            self.tk.call(self._name, "map", style, *_format_mapdict(kw)),
+            conv=_tclobj_to_py)
 
 
     def lookup(self, style, option, state=None, default=None):
@@ -468,8 +455,8 @@ class Style(object):
             lspec = "null" # could be any other word, but this may make sense
                            # when calling layout(style) later
 
-        return _list_from_layouttuple(self.tk.splitlist(
-            self.tk.call(self._name, "layout", style, lspec)))
+        return _list_from_layouttuple(self.tk,
+            self.tk.call(self._name, "layout", style, lspec))
 
 
     def element_create(self, elementname, etype, *args, **kw):
@@ -588,7 +575,7 @@ class Widget(Tkinter.Widget):
         if ret and callback:
             return callback(*args, **kw)
 
-        return bool(ret)
+        return ret
 
 
     def state(self, statespec=None):
@@ -696,7 +683,7 @@ class Entry(Widget, Tkinter.Entry):
         """Force revalidation, independent of the conditions specified
         by the validate option. Returns False if validation fails, True
         if it succeeds. Sets or clears the invalid state accordingly."""
-        return bool(self.tk.getboolean(self.tk.call(self._w, "validate")))
+        return self.tk.getboolean(self.tk.call(self._w, "validate"))
 
 
 class Combobox(Entry):
@@ -909,7 +896,7 @@ class Notebook(Widget):
         options to the corresponding values."""
         if option is not None:
             kw[option] = None
-        return _val_or_dict(kw, self.tk.call, self._w, "tab", tab_id)
+        return _val_or_dict(self.tk, kw, self._w, "tab", tab_id)
 
 
     def tabs(self):
@@ -986,7 +973,7 @@ class Panedwindow(Widget, Tkinter.PanedWindow):
         Otherwise, sets the options to the corresponding values."""
         if option is not None:
             kw[option] = None
-        return _val_or_dict(kw, self.tk.call, self._w, "pane", pane)
+        return _val_or_dict(self.tk, kw, self._w, "pane", pane)
 
 
     def sashpos(self, index, newpos=None):
@@ -1225,7 +1212,7 @@ class Treeview(Widget, Tkinter.XView, Tkinter.YView):
         Otherwise, sets the options to the corresponding values."""
         if option is not None:
             kw[option] = None
-        return _val_or_dict(kw, self.tk.call, self._w, "column", column)
+        return _val_or_dict(self.tk, kw, self._w, "column", column)
 
 
     def delete(self, *items):
@@ -1246,7 +1233,7 @@ class Treeview(Widget, Tkinter.XView, Tkinter.YView):
     def exists(self, item):
         """Returns True if the specified item is present in the tree,
         False otherwise."""
-        return bool(self.tk.getboolean(self.tk.call(self._w, "exists", item)))
+        return self.tk.getboolean(self.tk.call(self._w, "exists", item))
 
 
     def focus(self, item=None):
@@ -1284,7 +1271,7 @@ class Treeview(Widget, Tkinter.XView, Tkinter.YView):
         if option is not None:
             kw[option] = None
 
-        return _val_or_dict(kw, self.tk.call, self._w, 'heading', column)
+        return _val_or_dict(self.tk, kw, self._w, 'heading', column)
 
 
     def identify(self, component, x, y):
@@ -1363,7 +1350,7 @@ class Treeview(Widget, Tkinter.XView, Tkinter.YView):
         values as given by kw."""
         if option is not None:
             kw[option] = None
-        return _val_or_dict(kw, self.tk.call, self._w, "item", item)
+        return _val_or_dict(self.tk, kw, self._w, "item", item)
 
 
     def move(self, item, parent, index):
@@ -1431,13 +1418,16 @@ class Treeview(Widget, Tkinter.XView, Tkinter.YView):
 
 
     def set(self, item, column=None, value=None):
-        """With one argument, returns a dictionary of column/value pairs
-        for the specified item. With two arguments, returns the current
-        value of the specified column. With three arguments, sets the
+        """Query or set the value of given item.
+
+        With one argument, return a dictionary of column/value pairs
+        for the specified item. With two arguments, return the current
+        value of the specified column. With three arguments, set the
         value of given column in given item to the specified value."""
         res = self.tk.call(self._w, "set", item, column, value)
         if column is None and value is None:
-            return _dict_from_tcltuple(self.tk.splitlist(res), False)
+            return _splitdict(self.tk, res,
+                              cut_minus=False, conv=_tclobj_to_py)
         else:
             return res
 
@@ -1458,7 +1448,7 @@ class Treeview(Widget, Tkinter.XView, Tkinter.YView):
         values for the given tagname."""
         if option is not None:
             kw[option] = None
-        return _val_or_dict(kw, self.tk.call, self._w, "tag", "configure",
+        return _val_or_dict(self.tk, kw, self._w, "tag", "configure",
             tagname)
 
 
@@ -1468,7 +1458,11 @@ class Treeview(Widget, Tkinter.XView, Tkinter.YView):
         all items which have the specified tag.
 
         * Availability: Tk 8.6"""
-        return self.tk.getboolean(
+        if item is None:
+            return self.tk.splitlist(
+                self.tk.call(self._w, "tag", "has", tagname))
+        else:
+            return self.tk.getboolean(
                 self.tk.call(self._w, "tag", "has", tagname, item))
 
 

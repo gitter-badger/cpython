@@ -62,6 +62,25 @@ class BaseTest(unittest.TestCase):
         sys.modules['warnings'] = original_warnings
         super(BaseTest, self).tearDown()
 
+class PublicAPITests(BaseTest):
+
+    """Ensures that the correct values are exposed in the
+    public API.
+    """
+
+    def test_module_all_attribute(self):
+        self.assertTrue(hasattr(self.module, '__all__'))
+        target_api = ["warn", "warn_explicit", "showwarning",
+                      "formatwarning", "filterwarnings", "simplefilter",
+                      "resetwarnings", "catch_warnings"]
+        self.assertSetEqual(set(self.module.__all__),
+                            set(target_api))
+
+class CPublicAPITests(PublicAPITests, unittest.TestCase):
+    module = c_warnings
+
+class PyPublicAPITests(PublicAPITests, unittest.TestCase):
+    module = py_warnings
 
 class FilterTests(object):
 
@@ -541,6 +560,15 @@ class _WarningsTests(BaseTest):
         finally:
             globals_dict['__file__'] = oldfile
 
+    def test_stderr_none(self):
+        rc, stdout, stderr = assert_python_ok("-c",
+            "import sys; sys.stderr = None; "
+            "import warnings; warnings.simplefilter('always'); "
+            "warnings.warn('Warning!')")
+        self.assertEqual(stdout, b'')
+        self.assertNotIn(b'Warning!', stderr)
+        self.assertNotIn(b'Error', stderr)
+
 
 class WarningsDisplayTests(unittest.TestCase):
 
@@ -562,6 +590,63 @@ class WarningsDisplayTests(unittest.TestCase):
         file_line += " for the win!"
         expect = format % (file_name, line_num, category.__name__, message,
                             file_line)
+        self.assertEqual(expect, self.module.formatwarning(message,
+                                    category, file_name, line_num, file_line))
+
+    @test_support.requires_unicode
+    def test_formatwarning_unicode_msg(self):
+        message = u"msg"
+        category = Warning
+        file_name = os.path.splitext(warning_tests.__file__)[0] + '.py'
+        line_num = 3
+        file_line = linecache.getline(file_name, line_num).strip()
+        format = "%s:%s: %s: %s\n  %s\n"
+        expect = format % (file_name, line_num, category.__name__, message,
+                            file_line)
+        self.assertEqual(expect, self.module.formatwarning(message,
+                                                category, file_name, line_num))
+        # Test the 'line' argument.
+        file_line += " for the win!"
+        expect = format % (file_name, line_num, category.__name__, message,
+                            file_line)
+        self.assertEqual(expect, self.module.formatwarning(message,
+                                    category, file_name, line_num, file_line))
+
+    @test_support.requires_unicode
+    @unittest.skipUnless(test_support.FS_NONASCII, 'need test_support.FS_NONASCII')
+    def test_formatwarning_unicode_msg_nonascii_filename(self):
+        message = u"msg"
+        category = Warning
+        unicode_file_name = test_support.FS_NONASCII + u'.py'
+        file_name = unicode_file_name.encode(sys.getfilesystemencoding())
+        line_num = 3
+        file_line = 'spam'
+        format = "%s:%s: %s: %s\n  %s\n"
+        expect = format % (file_name, line_num, category.__name__, str(message),
+                            file_line)
+        self.assertEqual(expect, self.module.formatwarning(message,
+                                    category, file_name, line_num, file_line))
+        message = u"\xb5sg"
+        expect = format % (unicode_file_name, line_num, category.__name__, message,
+                            file_line)
+        self.assertEqual(expect, self.module.formatwarning(message,
+                                    category, file_name, line_num, file_line))
+
+    @test_support.requires_unicode
+    def test_formatwarning_unicode_msg_nonascii_fileline(self):
+        message = u"msg"
+        category = Warning
+        file_name = 'file.py'
+        line_num = 3
+        file_line = 'sp\xe4m'
+        format = "%s:%s: %s: %s\n  %s\n"
+        expect = format % (file_name, line_num, category.__name__, str(message),
+                            file_line)
+        self.assertEqual(expect, self.module.formatwarning(message,
+                                    category, file_name, line_num, file_line))
+        message = u"\xb5sg"
+        expect = format % (file_name, line_num, category.__name__, message,
+                            unicode(file_line, 'latin1'))
         self.assertEqual(expect, self.module.formatwarning(message,
                                     category, file_name, line_num, file_line))
 

@@ -337,6 +337,77 @@ object and the argument list, and the function object is called with this new
 argument list.
 
 
+.. _tut-class-and-instance-variables:
+
+Class and Instance Variables
+----------------------------
+
+Generally speaking, instance variables are for data unique to each instance
+and class variables are for attributes and methods shared by all instances
+of the class::
+
+    class Dog:
+
+        kind = 'canine'         # class variable shared by all instances
+
+        def __init__(self, name):
+            self.name = name    # instance variable unique to each instance
+
+    >>> d = Dog('Fido')
+    >>> e = Dog('Buddy')
+    >>> d.kind                  # shared by all dogs
+    'canine'
+    >>> e.kind                  # shared by all dogs
+    'canine'
+    >>> d.name                  # unique to d
+    'Fido'
+    >>> e.name                  # unique to e
+    'Buddy'
+
+As discussed in :ref:`tut-object`, shared data can have possibly surprising
+effects with involving :term:`mutable` objects such as lists and dictionaries.
+For example, the *tricks* list in the following code should not be used as a
+class variable because just a single list would be shared by all *Dog*
+instances::
+
+    class Dog:
+
+        tricks = []             # mistaken use of a class variable
+
+        def __init__(self, name):
+            self.name = name
+
+        def add_trick(self, trick):
+            self.tricks.append(trick)
+
+    >>> d = Dog('Fido')
+    >>> e = Dog('Buddy')
+    >>> d.add_trick('roll over')
+    >>> e.add_trick('play dead')
+    >>> d.tricks                # unexpectedly shared by all dogs
+    ['roll over', 'play dead']
+
+Correct design of the class should use an instance variable instead::
+
+    class Dog:
+
+        def __init__(self, name):
+            self.name = name
+            self.tricks = []    # creates a new empty list for each dog
+
+        def add_trick(self, trick):
+            self.tricks.append(trick)
+
+    >>> d = Dog('Fido')
+    >>> e = Dog('Buddy')
+    >>> d.add_trick('roll over')
+    >>> e.add_trick('play dead')
+    >>> d.tricks
+    ['roll over']
+    >>> e.tricks
+    ['play dead']
+
+
 .. _tut-remarks:
 
 Random Remarks
@@ -529,7 +600,7 @@ parent only once, and that is monotonic (meaning that a class can be subclassed
 without affecting the precedence order of its parents).  Taken together, these
 properties make it possible to design reliable and extensible classes with
 multiple inheritance.  For more detail, see
-http://www.python.org/download/releases/2.3/mro/.
+https://www.python.org/download/releases/2.3/mro/.
 
 
 .. _tut-private:
@@ -717,8 +788,8 @@ This example shows how it all works::
 
 Having seen the mechanics behind the iterator protocol, it is easy to add
 iterator behavior to your classes.  Define an :meth:`__iter__` method which
-returns an object with a :meth:`next` method.  If the class defines
-:meth:`next`, then :meth:`__iter__` can just return ``self``::
+returns an object with a :meth:`~iterator.next` method.  If the class
+defines :meth:`~iterator.next`, then :meth:`__iter__` can just return ``self``::
 
    class Reverse:
        """Iterator for looping over a sequence backwards."""
@@ -754,8 +825,8 @@ Generators
 
 :term:`Generator`\s are a simple and powerful tool for creating iterators.  They
 are written like regular functions but use the :keyword:`yield` statement
-whenever they want to return data.  Each time :meth:`next` is called, the
-generator resumes where it left-off (it remembers all the data values and which
+whenever they want to return data.  Each time :func:`next` is called on it, the
+generator resumes where it left off (it remembers all the data values and which
 statement was last executed).  An example shows that generators can be trivially
 easy to create::
 
@@ -773,10 +844,10 @@ easy to create::
    o
    g
 
-Anything that can be done with generators can also be done with class based
+Anything that can be done with generators can also be done with class-based
 iterators as described in the previous section.  What makes generators so
-compact is that the :meth:`__iter__` and :meth:`next` methods are created
-automatically.
+compact is that the :meth:`__iter__` and :meth:`~generator.next` methods
+are created automatically.
 
 Another key feature is that the local variables and execution state are
 automatically saved between calls.  This made the function easier to write and

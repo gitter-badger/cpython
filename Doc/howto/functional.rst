@@ -587,7 +587,8 @@ And here's an example of changing the counter:
 
 Because ``yield`` will often be returning ``None``, you should always check for
 this case.  Don't just use its value in expressions unless you're sure that the
-``send()`` method will be the only method used resume your generator function.
+``send()`` method will be the only method used to resume your generator
+function.
 
 In addition to ``send()``, there are two other new methods on generators:
 
@@ -740,7 +741,7 @@ the constructed list's ``.sort()`` method. ::
     [9878, 9828, 8442, 7953, 6431, 6213, 2207, 769]
 
 (For a more detailed discussion of sorting, see the Sorting mini-HOWTO in the
-Python wiki at http://wiki.python.org/moin/HowTo/Sorting.)
+Python wiki at https://wiki.python.org/moin/HowTo/Sorting.)
 
 The ``any(iter)`` and ``all(iter)`` built-ins look at the truth values of an
 iterable's contents.  :func:`any` returns ``True`` if any element in the iterable is

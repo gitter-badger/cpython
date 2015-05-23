@@ -1,5 +1,23 @@
 #include "Python.h"
 
+#if defined(__has_feature)  /* Clang */
+ #if __has_feature(address_sanitizer)  /* is ASAN enabled? */
+  #define ATTRIBUTE_NO_ADDRESS_SAFETY_ANALYSIS \
+        __attribute__((no_address_safety_analysis)) \
+        __attribute__ ((noinline))
+ #else
+  #define ATTRIBUTE_NO_ADDRESS_SAFETY_ANALYSIS
+ #endif
+#else
+ #if defined(__SANITIZE_ADDRESS__)  /* GCC 4.8.x, is ASAN enabled? */
+  #define ATTRIBUTE_NO_ADDRESS_SAFETY_ANALYSIS \
+        __attribute__((no_address_safety_analysis)) \
+        __attribute__ ((noinline))
+ #else
+  #define ATTRIBUTE_NO_ADDRESS_SAFETY_ANALYSIS
+ #endif
+#endif
+
 #ifdef WITH_PYMALLOC
 
 #ifdef HAVE_MMAP
@@ -540,6 +558,8 @@ new_arena(void)
 {
     struct arena_object* arenaobj;
     uint excess;        /* number of bytes above pool alignment */
+    void *address;
+    int err;
 
 #ifdef PYMALLOC_DEBUG
     if (Py_GETENV("PYTHONMALLOCSTATS"))
@@ -593,12 +613,14 @@ new_arena(void)
     unused_arena_objects = arenaobj->nextarena;
     assert(arenaobj->address == 0);
 #ifdef ARENAS_USE_MMAP
-    arenaobj->address = (uptr)mmap(NULL, ARENA_SIZE, PROT_READ|PROT_WRITE,
-                                   MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+    address = mmap(NULL, ARENA_SIZE, PROT_READ|PROT_WRITE,
+                   MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+    err = (address == MAP_FAILED);
 #else
-    arenaobj->address = (uptr)malloc(ARENA_SIZE);
+    address = malloc(ARENA_SIZE);
+    err = (address == 0);
 #endif    
-    if (arenaobj->address == 0) {
+    if (err) {
         /* The allocation failed: return NULL after putting the
          * arenaobj back.
          */
@@ -606,6 +628,7 @@ new_arena(void)
         unused_arena_objects = arenaobj;
         return NULL;
     }
+    arenaobj->address = (uptr)address;
 
     ++narenas_currently_allocated;
 #ifdef PYMALLOC_DEBUG
@@ -966,6 +989,7 @@ redirect:
 /* free */
 
 #undef PyObject_Free
+ATTRIBUTE_NO_ADDRESS_SAFETY_ANALYSIS
 void
 PyObject_Free(void *p)
 {
@@ -1196,6 +1220,7 @@ redirect:
  */
 
 #undef PyObject_Realloc
+ATTRIBUTE_NO_ADDRESS_SAFETY_ANALYSIS
 void *
 PyObject_Realloc(void *p, size_t nbytes)
 {

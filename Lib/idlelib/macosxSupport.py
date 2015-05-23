@@ -125,11 +125,9 @@ def overrideRootMenu(root, flist):
     #
     # Due to a (mis-)feature of TkAqua the user will also see an empty Help
     # menu.
-    from Tkinter import Menu, Text, Text
-    from idlelib.EditorWindow import prepstr, get_accelerator
+    from Tkinter import Menu
     from idlelib import Bindings
     from idlelib import WindowList
-    from idlelib.MultiCall import MultiCallCreator
 
     closeItem = Bindings.menudefs[0][1][-2]
 
@@ -142,11 +140,9 @@ def overrideRootMenu(root, flist):
     # Remove the 'About' entry from the help menu, it is in the application
     # menu
     del Bindings.menudefs[-1][1][0:2]
-
-    # Remove the 'Configure' entry from the options menu, it is in the
+    # Remove the 'Configure Idle' entry from the options menu, it is in the
     # application menu as 'Preferences'
-    del Bindings.menudefs[-2][1][0:2]
-
+    del Bindings.menudefs[-2][1][0]
     menubar = Menu(root)
     root.configure(menu=menubar)
     menudict = {}

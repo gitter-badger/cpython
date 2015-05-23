@@ -472,15 +472,16 @@ PyObject *PyCodec_StrictErrors(PyObject *exc)
 PyObject *PyCodec_IgnoreErrors(PyObject *exc)
 {
     Py_ssize_t end;
-    if (PyObject_IsInstance(exc, PyExc_UnicodeEncodeError)) {
+
+    if (PyObject_TypeCheck(exc, (PyTypeObject *)PyExc_UnicodeEncodeError)) {
         if (PyUnicodeEncodeError_GetEnd(exc, &end))
             return NULL;
     }
-    else if (PyObject_IsInstance(exc, PyExc_UnicodeDecodeError)) {
+    else if (PyObject_TypeCheck(exc, (PyTypeObject *)PyExc_UnicodeDecodeError)) {
         if (PyUnicodeDecodeError_GetEnd(exc, &end))
             return NULL;
     }
-    else if (PyObject_IsInstance(exc, PyExc_UnicodeTranslateError)) {
+    else if (PyObject_TypeCheck(exc, (PyTypeObject *)PyExc_UnicodeTranslateError)) {
         if (PyUnicodeTranslateError_GetEnd(exc, &end))
             return NULL;
     }
@@ -500,7 +501,7 @@ PyObject *PyCodec_ReplaceErrors(PyObject *exc)
     Py_ssize_t end;
     Py_ssize_t i;
 
-    if (PyObject_IsInstance(exc, PyExc_UnicodeEncodeError)) {
+    if (PyObject_TypeCheck(exc, (PyTypeObject *)PyExc_UnicodeEncodeError)) {
         PyObject *res;
         Py_UNICODE *p;
         if (PyUnicodeEncodeError_GetStart(exc, &start))
@@ -517,13 +518,13 @@ PyObject *PyCodec_ReplaceErrors(PyObject *exc)
         Py_DECREF(res);
         return restuple;
     }
-    else if (PyObject_IsInstance(exc, PyExc_UnicodeDecodeError)) {
+    else if (PyObject_TypeCheck(exc, (PyTypeObject *)PyExc_UnicodeDecodeError)) {
         Py_UNICODE res = Py_UNICODE_REPLACEMENT_CHARACTER;
         if (PyUnicodeDecodeError_GetEnd(exc, &end))
             return NULL;
         return Py_BuildValue("(u#n)", &res, (Py_ssize_t)1, end);
     }
-    else if (PyObject_IsInstance(exc, PyExc_UnicodeTranslateError)) {
+    else if (PyObject_TypeCheck(exc, (PyTypeObject *)PyExc_UnicodeTranslateError)) {
         PyObject *res;
         Py_UNICODE *p;
         if (PyUnicodeTranslateError_GetStart(exc, &start))
@@ -548,7 +549,7 @@ PyObject *PyCodec_ReplaceErrors(PyObject *exc)
 
 PyObject *PyCodec_XMLCharRefReplaceErrors(PyObject *exc)
 {
-    if (PyObject_IsInstance(exc, PyExc_UnicodeEncodeError)) {
+    if (PyObject_TypeCheck(exc, (PyTypeObject *)PyExc_UnicodeEncodeError)) {
         PyObject *restuple;
         PyObject *object;
         Py_ssize_t start;
@@ -558,7 +559,7 @@ PyObject *PyCodec_XMLCharRefReplaceErrors(PyObject *exc)
         Py_UNICODE *startp;
         Py_UNICODE *e;
         Py_UNICODE *outp;
-        int ressize;
+        Py_ssize_t ressize;
         if (PyUnicodeEncodeError_GetStart(exc, &start))
             return NULL;
         if (PyUnicodeEncodeError_GetEnd(exc, &end))
@@ -566,6 +567,13 @@ PyObject *PyCodec_XMLCharRefReplaceErrors(PyObject *exc)
         if (!(object = PyUnicodeEncodeError_GetObject(exc)))
             return NULL;
         startp = PyUnicode_AS_UNICODE(object);
+        if (end - start > PY_SSIZE_T_MAX / (2+7+1)) {
+            end = start + PY_SSIZE_T_MAX / (2+7+1);
+#ifndef Py_UNICODE_WIDE
+            if (0xD800 <= startp[end - 1] && startp[end - 1] <= 0xDBFF)
+                end--;
+#endif
+        }
         e = startp + end;
         for (p = startp+start, ressize = 0; p < e;) {
             Py_UCS4 ch = *p++;
@@ -666,7 +674,7 @@ static Py_UNICODE hexdigits[] = {
 
 PyObject *PyCodec_BackslashReplaceErrors(PyObject *exc)
 {
-    if (PyObject_IsInstance(exc, PyExc_UnicodeEncodeError)) {
+    if (PyObject_TypeCheck(exc, (PyTypeObject *)PyExc_UnicodeEncodeError)) {
         PyObject *restuple;
         PyObject *object;
         Py_ssize_t start;
@@ -675,13 +683,15 @@ PyObject *PyCodec_BackslashReplaceErrors(PyObject *exc)
         Py_UNICODE *p;
         Py_UNICODE *startp;
         Py_UNICODE *outp;
-        int ressize;
+        Py_ssize_t ressize;
         if (PyUnicodeEncodeError_GetStart(exc, &start))
             return NULL;
         if (PyUnicodeEncodeError_GetEnd(exc, &end))
             return NULL;
         if (!(object = PyUnicodeEncodeError_GetObject(exc)))
             return NULL;
+        if (end - start > PY_SSIZE_T_MAX / (1+1+8))
+            end = start + PY_SSIZE_T_MAX / (1+1+8);
         startp = PyUnicode_AS_UNICODE(object);
         for (p = startp+start, ressize = 0; p < startp+end; ++p) {
 #ifdef Py_UNICODE_WIDE
@@ -696,8 +706,10 @@ PyObject *PyCodec_BackslashReplaceErrors(PyObject *exc)
                 ressize += 1+1+2;
         }
         res = PyUnicode_FromUnicode(NULL, ressize);
-        if (res==NULL)
+        if (res == NULL) {
+            Py_DECREF(object);
             return NULL;
+        }
         for (p = startp+start, outp = PyUnicode_AS_UNICODE(res);
             p < startp+end; ++p) {
             Py_UNICODE c = *p;

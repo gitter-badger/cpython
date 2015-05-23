@@ -748,8 +748,8 @@ PyObject *PyString_DecodeEscape(const char *s,
                              UTF-8 bytes may follow. */
         }
     }
-    if (p-buf < newlen && _PyString_Resize(&v, p - buf))
-        goto failed;
+    if (p-buf < newlen)
+        _PyString_Resize(&v, p - buf); /* v is cleared on error */
     return v;
   failed:
     Py_DECREF(v);
@@ -926,13 +926,14 @@ PyObject *
 PyString_Repr(PyObject *obj, int smartquotes)
 {
     register PyStringObject* op = (PyStringObject*) obj;
-    size_t newsize = 2 + 4 * Py_SIZE(op);
+    size_t newsize;
     PyObject *v;
-    if (newsize > PY_SSIZE_T_MAX || newsize / 4 != Py_SIZE(op)) {
+    if (Py_SIZE(op) > (PY_SSIZE_T_MAX - 2)/4) {
         PyErr_SetString(PyExc_OverflowError,
             "string is too large to make repr");
         return NULL;
     }
+    newsize = 2 + 4*Py_SIZE(op);
     v = PyString_FromStringAndSize((char *)NULL, newsize);
     if (v == NULL) {
         return NULL;
@@ -1594,7 +1595,7 @@ string_join(PyStringObject *self, PyObject *orig)
     Py_ssize_t i;
     PyObject *seq, *item;
 
-    seq = PySequence_Fast(orig, "");
+    seq = PySequence_Fast(orig, "can only join an iterable");
     if (seq == NULL) {
         return NULL;
     }

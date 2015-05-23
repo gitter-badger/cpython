@@ -883,12 +883,14 @@ Py2Reg(PyObject *value, DWORD typ, BYTE **retDataBuf, DWORD *retDataSize)
         /* ALSO handle ALL unknown data types here.  Even if we can't
            support it natively, we should handle the bits. */
         default:
-            if (value == Py_None)
+            if (value == Py_None) {
                 *retDataSize = 0;
+                *retDataBuf = NULL;
+            }
             else {
                 void *src_buf;
                 PyBufferProcs *pb = value->ob_type->tp_as_buffer;
-                if (pb==NULL) {
+                if (pb == NULL || pb->bf_getreadbuffer == NULL) {
                     PyErr_Format(PyExc_TypeError,
                         "Objects of type '%s' can not "
                         "be used as binary registry values",
@@ -896,9 +898,11 @@ Py2Reg(PyObject *value, DWORD typ, BYTE **retDataBuf, DWORD *retDataSize)
                     return FALSE;
                 }
                 *retDataSize = (*pb->bf_getreadbuffer)(value, 0, &src_buf);
-                *retDataBuf = (BYTE *)PyMem_NEW(char,
-                                                *retDataSize);
-                if (*retDataBuf==NULL){
+                if (*retDataSize < 0) {
+                    return FALSE;
+                }
+                *retDataBuf = (BYTE *)PyMem_NEW(char, *retDataSize);
+                if (*retDataBuf == NULL){
                     PyErr_NoMemory();
                     return FALSE;
                 }

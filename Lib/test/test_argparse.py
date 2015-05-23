@@ -646,7 +646,7 @@ class TestOptionalsChoices(ParserTestCase):
 
 
 class TestOptionalsRequired(ParserTestCase):
-    """Tests the an optional action that is required"""
+    """Tests an optional action that is required"""
 
     argument_signatures = [
         Sig('-x', type=int, required=True),
@@ -2726,6 +2726,13 @@ class TestSetDefaults(TestCase):
         parser = ErrorRaisingArgumentParser(parents=[parent])
         self.assertEqual(NS(x='foo'), parser.parse_args([]))
 
+    def test_set_defaults_on_parent_and_subparser(self):
+        parser = argparse.ArgumentParser()
+        xparser = parser.add_subparsers().add_parser('X')
+        parser.set_defaults(foo=1)
+        xparser.set_defaults(foo=2)
+        self.assertEqual(NS(foo=2), parser.parse_args(['X']))
+
     def test_set_defaults_same_as_add_argument(self):
         parser = ErrorRaisingArgumentParser()
         parser.set_defaults(w='W', x='X', y='Y', z='Z')
@@ -4452,6 +4459,12 @@ class TestNamespace(TestCase):
         self.assertTrue(ns1 != ns4)
         self.assertTrue(ns2 != ns3)
         self.assertTrue(ns2 != ns4)
+
+    def test_equality_returns_notimplemeted(self):
+        # See issue 21481
+        ns = argparse.Namespace(a=1, b=2)
+        self.assertIs(ns.__eq__(None), NotImplemented)
+        self.assertIs(ns.__ne__(None), NotImplemented)
 
 
 # ===================

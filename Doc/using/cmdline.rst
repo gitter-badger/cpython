@@ -1,7 +1,7 @@
-.. highlightlang:: none
+.. highlightlang:: sh
 
 .. ATTENTION: You probably should update Misc/python.man, too, if you modify
-.. this file.
+   this file.
 
 .. _using-on-general:
 
@@ -129,6 +129,10 @@ source.
    If this option is given, the first element of :data:`sys.argv` will be
    ``"-"`` and the current directory will be added to the start of
    :data:`sys.path`.
+
+   .. seealso::
+      :func:`runpy.run_path`
+         Equivalent functionality directly available to Python code
 
 
 .. describe:: <script>
@@ -397,18 +401,9 @@ Miscellaneous options
 
 .. cmdoption:: -3
 
-   Warn about Python 3.x incompatibilities which cannot be fixed trivially by
-   :ref:`2to3 <2to3-reference>`. Among these are:
-
-   * :meth:`dict.has_key`
-   * :func:`apply`
-   * :func:`callable`
-   * :func:`coerce`
-   * :func:`execfile`
-   * :func:`reduce`
-   * :func:`reload`
-
-   Using these will emit a :exc:`DeprecationWarning`.
+   Warn about Python 3.x possible incompatibilities by emitting a
+   :exc:`DeprecationWarning` for features that are removed or significantly
+   changed in Python 3.
 
    .. versionadded:: 2.6
 
@@ -419,7 +414,7 @@ Options you shouldn't use
 
    Reserved for use by Jython_.
 
-.. _Jython: http://jython.org
+.. _Jython: http://www.jython.org/
 
 .. cmdoption:: -U
 
