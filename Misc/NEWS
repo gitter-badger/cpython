@@ -56,6 +56,16 @@ Documentation
   doc.  Remove obsolete example from FAQ.  Patch by Martin Panter.
 
 
+What's New in Python 2.7.10?
+============================
+
+*Release date: 2015-05-23*
+
+Library
+-------
+
+- Issue #22931: Allow '[' and ']' in cookie values.
+
 What's New in Python 2.7.10 release candidate 1?
 ================================================
 
