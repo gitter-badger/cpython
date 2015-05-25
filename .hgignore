@@ -63,3 +63,6 @@ PCbuild/Win32-temp-*
 coverage/
 externals/
 htmlcov/
+Include/pydtrace.h
+Include/pydtrace_offsets
+Include/pydtrace_offsets.h

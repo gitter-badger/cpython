@@ -3,6 +3,10 @@
 #include "Python.h"
 #include "structmember.h"
 
+#ifdef WITH_DTRACE
+#include "pydtrace.h"
+#endif
+
 #include <ctype.h>
 
 
@@ -754,8 +758,29 @@ PyObject *
 PyType_GenericAlloc(PyTypeObject *type, Py_ssize_t nitems)
 {
     PyObject *obj;
-    const size_t size = _PyObject_VAR_SIZE(type, nitems+1);
+    size_t size;
+
+#ifdef WITH_DTRACE
+    PyObject *mod;
+    char *mod_name;
+
+    if (PYTHON_INSTANCE_NEW_START_ENABLED()) {
+        if (type->tp_flags & Py_TPFLAGS_HEAPTYPE) {
+            mod = PyDict_GetItemString(type->tp_dict, "__module__");
+            if (mod == NULL || !PyString_Check(mod)) {
+                mod_name = "?";
+            } else {
+                mod_name = PyString_AS_STRING(mod);
+                if (!mod_name)
+                     mod_name = "?";
+            }
+            PYTHON_INSTANCE_NEW_START((char *)(type->tp_name), mod_name);
+        }
+    }
+#endif
+
     /* note that we need to add one, for the sentinel */
+    size = _PyObject_VAR_SIZE(type, nitems+1);
 
     if (PyType_IS_GC(type))
         obj = _PyObject_GC_Malloc(size);
@@ -777,6 +802,23 @@ PyType_GenericAlloc(PyTypeObject *type, Py_ssize_t nitems)
 
     if (PyType_IS_GC(type))
         _PyObject_GC_TRACK(obj);
+
+#ifdef WITH_DTRACE
+    if (PYTHON_INSTANCE_NEW_DONE_ENABLED()) {
+        if (type->tp_flags & Py_TPFLAGS_HEAPTYPE) {
+            mod = PyDict_GetItemString(type->tp_dict, "__module__");
+            if (mod == NULL || !PyString_Check(mod)) {
+                mod_name = "?";
+            } else {
+                mod_name = PyString_AS_STRING(mod);
+                if (!mod_name)
+                     mod_name = "?";
+            }
+            PYTHON_INSTANCE_NEW_DONE((char *)(type->tp_name), mod_name);
+        }
+    }
+#endif
+
     return obj;
 }
 
@@ -897,8 +939,55 @@ subtype_clear(PyObject *self)
     return 0;
 }
 
+#ifdef WITH_DTRACE
+static void subtype_dealloc2(PyObject *);  /* Forward declaration */
+
 static void
 subtype_dealloc(PyObject *self)
+{
+    PyObject *mod;
+    char *mod_name;
+    PyTypeObject *type;
+
+    type = Py_TYPE(self);
+    Py_INCREF(type);
+
+    if (PYTHON_INSTANCE_DELETE_START_ENABLED()) {
+        mod = PyDict_GetItemString(type->tp_dict, "__module__");
+        if (mod == NULL || !PyString_Check(mod)) {
+            mod_name = "?";
+        } else {
+            mod_name = PyString_AS_STRING(mod);
+            if (!mod_name)
+                 mod_name = "?";
+        }
+        PYTHON_INSTANCE_DELETE_START((char *)(type->tp_name), mod_name);
+    }
+
+    subtype_dealloc2(self);
+
+    if (PYTHON_INSTANCE_DELETE_DONE_ENABLED()) {
+        mod = PyDict_GetItemString(type->tp_dict, "__module__");
+        if (mod == NULL || !PyString_Check(mod)) {
+            mod_name = "?";
+        } else {
+            mod_name = PyString_AS_STRING(mod);
+            if (!mod_name)
+                 mod_name = "?";
+        }
+        PYTHON_INSTANCE_DELETE_DONE((char *)(type->tp_name), mod_name);
+    }
+    Py_DECREF(type);
+}
+#endif
+
+static void
+#ifdef WITH_DTRACE
+subtype_dealloc2
+#else
+subtype_dealloc
+#endif
+(PyObject *self)
 {
     PyTypeObject *type, *base;
     destructor basedealloc;

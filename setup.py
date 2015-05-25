@@ -681,6 +681,9 @@ class PyBuildExt(build_ext):
         # http://mail.python.org/pipermail/python-dev/2006-January/060023.html
         #exts.append( Extension('timing', ['timingmodule.c']) )
 
+        # jcea DTRACE probes
+        exts.append( Extension('dtrace', ['dtracemodule.c']) )
+
         #
         # Here ends the simple stuff.  From here on, modules need certain
         # libraries, are platform-specific, or present other surprises.

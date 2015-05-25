@@ -2845,6 +2845,69 @@ if test "$with_valgrind" != no; then
     )
 fi
 
+# Check for dtrace support
+AC_MSG_CHECKING(for --with-dtrace)
+AC_ARG_WITH(dtrace,
+  AC_HELP_STRING(--with(out)-dtrace, disable/enable dtrace support),,
+  with_dtrace=no)
+AC_MSG_RESULT($with_dtrace)
+
+AC_SUBST(DTRACE)
+AC_SUBST(DFLAGS)
+AC_SUBST(DTRACE_NM)
+AC_SUBST(DTRACE_LINKER)
+DTRACE=
+DFLAGS=
+if test "$with_dtrace" = "yes"
+then
+    DTRACE_NM=OTHER
+    DTRACE_LINKER=ld
+    DTRACEOBJS="Python/pydtrace.o"
+    AC_PATH_PROG(DTRACE, [dtrace], [dtrace], [$PATH$PATH_SEPARATOR/usr/sbin])
+    AC_CHECK_SIZEOF([long])
+    if [test "$ac_cv_sizeof_long" -eq 8]
+    then
+        DFLAGS="-64"
+    else
+        DFLAGS="-32"
+    fi
+    sys_release="$ac_sys_release"
+    if test $ac_sys_system = "SunOS"
+    then
+        if test $sys_release="5.11"
+        then
+            sys_release=`uname -v`
+        fi
+    fi
+    case $ac_sys_system/$sys_release in
+        SunOS/5.10)
+            DTRACE_NM=SOLARIS
+            DTRACE_LINKER=/usr/ccs/bin/ld
+            ;;
+        SunOS/11.*)
+            DTRACE_NM=SOLARIS
+            DTRACE_LINKER=/usr/ccs/bin/ld
+	    ;;
+        SunOS/*)
+            DTRACE_LINKER=/usr/ccs/bin/ld
+            ;;
+        Darwin/*)
+            DTRACEOBJS=""  # Not needed in Mac
+            AC_CHECK_SIZEOF([long])
+            if [test "$ac_cv_sizeof_long" -eq 8]
+            then
+                DFLAGS="-arch i386"
+            else
+                DFLAGS="-arch x86_64"
+            fi
+            ;;
+    esac
+    AC_DEFINE(WITH_DTRACE, 1, 
+     [Define if you want to compile in Dtrace support])
+fi
+
+AC_SUBST(DTRACEOBJS)
+
 # Check for --with-wctype-functions
 AC_MSG_CHECKING(for --with-wctype-functions)
 AC_ARG_WITH(wctype-functions, 

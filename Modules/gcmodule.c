@@ -21,6 +21,10 @@
 #include "Python.h"
 #include "frameobject.h"        /* for PyFrame_ClearFreeList */
 
+#ifdef WITH_DTRACE
+#include "pydtrace.h"
+#endif
+
 /* Get an object's GC head */
 #define AS_GC(o) ((PyGC_Head *)(o)-1)
 
@@ -869,7 +873,12 @@ get_time(void)
 /* This is the main function.  Read this to understand how the
  * collection process works. */
 static Py_ssize_t
-collect(int generation)
+#ifdef WITH_DTRACE
+collect2
+#else
+collect
+#endif
+(int generation)
 {
     int i;
     Py_ssize_t m = 0; /* # objects collected */
@@ -1028,6 +1037,49 @@ collect(int generation)
     }
     return n+m;
 }
+
+#ifdef WITH_DTRACE
+static void
+dtrace_gc_start(int collection)
+{
+    PYTHON_GC_START(collection);
+
+    /*
+     * Currently a USDT tail-call will not receive the correct arguments.
+     * Disable the tail call here.
+     */
+#if defined(__sparc)
+    asm("nop");
+#endif
+}
+
+static void
+dtrace_gc_done(Py_ssize_t value)
+{
+    PYTHON_GC_DONE((long) value);
+
+    /*
+     * Currently a USDT tail-call will not receive the correct arguments.
+     * Disable the tail call here.
+     */
+#if defined(__sparc)
+    asm("nop");
+#endif
+}
+
+static Py_ssize_t
+collect(int collection)
+{
+    Py_ssize_t value;
+
+    if (PYTHON_GC_START_ENABLED())
+        dtrace_gc_start(collection);
+    value = collect2(collection);
+    if (PYTHON_GC_DONE_ENABLED())
+        dtrace_gc_done(value);
+    return value;
+}
+#endif /* WITH_DTRACE */
 
 static Py_ssize_t
 collect_generations(void)
