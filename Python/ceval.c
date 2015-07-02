@@ -712,7 +712,7 @@ Py_SetRecursionLimit(int new_limit)
    to guarantee that _Py_CheckRecursiveCall() is regularly called.
    Without USE_STACKCHECK, there is no need for this. */
 int
-_Py_CheckRecursiveCall(char *where)
+_Py_CheckRecursiveCall(const char *where)
 {
     PyThreadState *tstate = PyThreadState_GET();
 
@@ -1191,7 +1191,7 @@ PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
     f->f_stacktop = NULL;       /* remains NULL unless yield suspends frame */
     f->f_executing = 1;
 
-    if (co->co_flags & CO_GENERATOR) {
+    if (co->co_flags & (CO_GENERATOR | CO_COROUTINE)) {
         if (!throwflag && f->f_exc_type != NULL && f->f_exc_type != Py_None) {
             /* We were in an except handler when we left,
                restore the exception state which was put aside
@@ -1927,7 +1927,7 @@ PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
         }
 
         TARGET(GET_AITER) {
-            getaiterfunc getter = NULL;
+            unaryfunc getter = NULL;
             PyObject *iter = NULL;
             PyObject *awaitable = NULL;
             PyObject *obj = TOP();
@@ -1955,7 +1955,7 @@ PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
                 goto error;
             }
 
-            awaitable = _PyGen_GetAwaitableIter(iter);
+            awaitable = _PyCoro_GetAwaitableIter(iter);
             if (awaitable == NULL) {
                 SET_TOP(NULL);
                 PyErr_Format(
@@ -1974,7 +1974,7 @@ PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
         }
 
         TARGET(GET_ANEXT) {
-            aiternextfunc getter = NULL;
+            unaryfunc getter = NULL;
             PyObject *next_iter = NULL;
             PyObject *awaitable = NULL;
             PyObject *aiter = TOP();
@@ -1998,7 +1998,7 @@ PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
                 goto error;
             }
 
-            awaitable = _PyGen_GetAwaitableIter(next_iter);
+            awaitable = _PyCoro_GetAwaitableIter(next_iter);
             if (awaitable == NULL) {
                 PyErr_Format(
                     PyExc_TypeError,
@@ -2017,7 +2017,7 @@ PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
 
         TARGET(GET_AWAITABLE) {
             PyObject *iterable = TOP();
-            PyObject *iter = _PyGen_GetAwaitableIter(iterable);
+            PyObject *iter = _PyCoro_GetAwaitableIter(iterable);
 
             Py_DECREF(iterable);
 
@@ -2034,25 +2034,7 @@ PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
             PyObject *v = POP();
             PyObject *reciever = TOP();
             int err;
-            if (PyGen_CheckExact(reciever)) {
-                if (
-                    (((PyCodeObject*) \
-                        ((PyGenObject*)reciever)->gi_code)->co_flags &
-                                                        CO_COROUTINE)
-                    && !(co->co_flags & (CO_COROUTINE | CO_ITERABLE_COROUTINE)))
-                {
-                    /* If we're yielding-from a coroutine object from a regular
-                       generator object - raise an error. */
-
-                    Py_CLEAR(v);
-                    Py_CLEAR(reciever);
-                    SET_TOP(NULL);
-
-                    PyErr_SetString(PyExc_TypeError,
-                                    "cannot 'yield from' a coroutine object "
-                                    "from a generator");
-                    goto error;
-                }
+            if (PyGen_CheckExact(reciever) || PyCoro_CheckExact(reciever)) {
                 retval = _PyGen_Send((PyGenObject *)reciever, v);
             } else {
                 _Py_IDENTIFIER(send);
@@ -2584,8 +2566,8 @@ PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
                 goto error;
             while (--oparg >= 0) {
                 int err;
-                PyObject *key = TOP();
-                PyObject *value = SECOND();
+                PyObject *value = TOP();
+                PyObject *key = SECOND();
                 STACKADJ(-2);
                 err = PyDict_SetItem(map, key, value);
                 Py_DECREF(value);
@@ -2677,21 +2659,6 @@ PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
             while (num_maps--)
                 Py_DECREF(POP());
             PUSH(sum);
-            DISPATCH();
-        }
-
-        TARGET(STORE_MAP) {
-            PyObject *key = TOP();
-            PyObject *value = SECOND();
-            PyObject *map = THIRD();
-            int err;
-            STACKADJ(-2);
-            assert(PyDict_CheckExact(map));
-            err = PyDict_SetItem(map, key, value);
-            Py_DECREF(value);
-            Py_DECREF(key);
-            if (err != 0)
-                goto error;
             DISPATCH();
         }
 
@@ -2944,19 +2911,33 @@ PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
         TARGET(GET_ITER) {
             /* before: [obj]; after [getiter(obj)] */
             PyObject *iterable = TOP();
+            PyObject *iter = PyObject_GetIter(iterable);
+            Py_DECREF(iterable);
+            SET_TOP(iter);
+            if (iter == NULL)
+                goto error;
+            PREDICT(FOR_ITER);
+            DISPATCH();
+        }
+
+        TARGET(GET_YIELD_FROM_ITER) {
+            /* before: [obj]; after [getiter(obj)] */
+            PyObject *iterable = TOP();
             PyObject *iter;
-            /* If we have a generator object on top -- keep it there,
-               it's already an iterator.
-
-               This is needed to allow use of 'async def' coroutines
-               in 'yield from' expression from generator-based coroutines
-               (decorated with types.coroutine()).
-
-               'yield from' is compiled to GET_ITER..YIELD_FROM combination,
-               but since coroutines raise TypeError in their 'tp_iter' we
-               need a way for them to "pass through" the GET_ITER.
-            */
-            if (!PyGen_CheckExact(iterable)) {
+            if (PyCoro_CheckExact(iterable)) {
+                /* `iterable` is a coroutine */
+                if (!(co->co_flags & (CO_COROUTINE | CO_ITERABLE_COROUTINE))) {
+                    /* and it is used in a 'yield from' expression of a
+                       regular generator. */
+                    Py_DECREF(iterable);
+                    SET_TOP(NULL);
+                    PyErr_SetString(PyExc_TypeError,
+                                    "cannot 'yield from' a coroutine object "
+                                    "in a non-coroutine generator");
+                    goto error;
+                }
+            }
+            else if (!PyGen_CheckExact(iterable)) {
                 /* `iterable` is not a generator. */
                 iter = PyObject_GetIter(iterable);
                 Py_DECREF(iterable);
@@ -2964,7 +2945,6 @@ PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
                 if (iter == NULL)
                     goto error;
             }
-            PREDICT(FOR_ITER);
             DISPATCH();
         }
 
@@ -3532,7 +3512,7 @@ fast_block_end:
     assert((retval != NULL) ^ (PyErr_Occurred() != NULL));
 
 fast_yield:
-    if (co->co_flags & CO_GENERATOR) {
+    if (co->co_flags & (CO_GENERATOR | CO_COROUTINE)) {
 
         /* The purpose of this block is to put aside the generator's exception
            state and restore that of the calling frame. If the current
@@ -3934,9 +3914,20 @@ _PyEval_EvalCodeWithName(PyObject *_co, PyObject *globals, PyObject *locals,
         freevars[PyTuple_GET_SIZE(co->co_cellvars) + i] = o;
     }
 
-    if (co->co_flags & CO_GENERATOR) {
+    if (co->co_flags & (CO_GENERATOR | CO_COROUTINE)) {
         PyObject *gen;
-        PyObject *coroutine_wrapper;
+        PyObject *coro_wrapper = tstate->coroutine_wrapper;
+        int is_coro = co->co_flags & CO_COROUTINE;
+
+        if (is_coro && tstate->in_coroutine_wrapper) {
+            assert(coro_wrapper != NULL);
+            PyErr_Format(PyExc_RuntimeError,
+                         "coroutine wrapper %.200R attempted "
+                         "to recursively wrap %.200R",
+                         coro_wrapper,
+                         co);
+            goto fail;
+        }
 
         /* Don't need to keep the reference to f_back, it will be set
          * when the generator is resumed. */
@@ -3946,18 +3937,22 @@ _PyEval_EvalCodeWithName(PyObject *_co, PyObject *globals, PyObject *locals,
 
         /* Create a new generator that owns the ready to run frame
          * and return that as the value. */
-        gen = PyGen_NewWithQualName(f, name, qualname);
+        if (is_coro) {
+            gen = PyCoro_New(f, name, qualname);
+        } else {
+            gen = PyGen_NewWithQualName(f, name, qualname);
+        }
         if (gen == NULL)
             return NULL;
 
-        if (co->co_flags & (CO_COROUTINE | CO_ITERABLE_COROUTINE)) {
-            coroutine_wrapper = PyEval_GetCoroutineWrapper();
-            if (coroutine_wrapper != NULL) {
-                PyObject *wrapped =
-                            PyObject_CallFunction(coroutine_wrapper, "N", gen);
-                gen = wrapped;
-            }
+        if (is_coro && coro_wrapper != NULL) {
+            PyObject *wrapped;
+            tstate->in_coroutine_wrapper = 1;
+            wrapped = PyObject_CallFunction(coro_wrapper, "N", gen);
+            tstate->in_coroutine_wrapper = 0;
+            return wrapped;
         }
+
         return gen;
     }
 
@@ -4405,7 +4400,7 @@ PyEval_SetTrace(Py_tracefunc func, PyObject *arg)
 }
 
 void
-PyEval_SetCoroutineWrapper(PyObject *wrapper)
+_PyEval_SetCoroutineWrapper(PyObject *wrapper)
 {
     PyThreadState *tstate = PyThreadState_GET();
 
@@ -4416,7 +4411,7 @@ PyEval_SetCoroutineWrapper(PyObject *wrapper)
 }
 
 PyObject *
-PyEval_GetCoroutineWrapper(void)
+_PyEval_GetCoroutineWrapper(void)
 {
     PyThreadState *tstate = PyThreadState_GET();
     return tstate->coroutine_wrapper;

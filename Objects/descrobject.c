@@ -1268,11 +1268,11 @@ PyWrapper_New(PyObject *d, PyObject *self)
 /* A built-in 'property' type */
 
 /*
-    class property(object):
+class property(object):
 
     def __init__(self, fget=None, fset=None, fdel=None, doc=None):
         if doc is None and fget is not None and hasattr(fget, "__doc__"):
-        doc = fget.__doc__
+            doc = fget.__doc__
         self.__get = fget
         self.__set = fset
         self.__del = fdel
@@ -1280,19 +1280,19 @@ PyWrapper_New(PyObject *d, PyObject *self)
 
     def __get__(self, inst, type=None):
         if inst is None:
-        return self
+            return self
         if self.__get is None:
-        raise AttributeError, "unreadable attribute"
+            raise AttributeError, "unreadable attribute"
         return self.__get(inst)
 
     def __set__(self, inst, value):
         if self.__set is None:
-        raise AttributeError, "can't set attribute"
+            raise AttributeError, "can't set attribute"
         return self.__set(inst, value)
 
     def __delete__(self, inst):
         if self.__del is None:
-        raise AttributeError, "can't delete attribute"
+            raise AttributeError, "can't delete attribute"
         return self.__del(inst)
 
 */
@@ -1372,7 +1372,8 @@ property_dealloc(PyObject *self)
 static PyObject *
 property_descr_get(PyObject *self, PyObject *obj, PyObject *type)
 {
-    static PyObject *args = NULL;
+    static PyObject * volatile cached_args = NULL;
+    PyObject *args;
     PyObject *ret;
     propertyobject *gs = (propertyobject *)self;
 
@@ -1384,12 +1385,28 @@ property_descr_get(PyObject *self, PyObject *obj, PyObject *type)
         PyErr_SetString(PyExc_AttributeError, "unreadable attribute");
         return NULL;
     }
-    if (!args && !(args = PyTuple_New(1))) {
-        return NULL;
+    args = cached_args;
+    if (!args || Py_REFCNT(args) != 1) {
+        Py_CLEAR(cached_args);
+        if (!(cached_args = args = PyTuple_New(1)))
+            return NULL;
     }
+    Py_INCREF(args);
+    assert (Py_REFCNT(args) == 2);
+    Py_INCREF(obj);
     PyTuple_SET_ITEM(args, 0, obj);
     ret = PyObject_Call(gs->prop_get, args, NULL);
-    PyTuple_SET_ITEM(args, 0, NULL);
+    if (args == cached_args) {
+        if (Py_REFCNT(args) == 2) {
+            obj = PyTuple_GET_ITEM(args, 0);
+            PyTuple_SET_ITEM(args, 0, NULL);
+            Py_XDECREF(obj);
+        }
+        else {
+            Py_CLEAR(cached_args);
+        }
+    }
+    Py_DECREF(args);
     return ret;
 }
 

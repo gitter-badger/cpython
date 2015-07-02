@@ -33,9 +33,9 @@ The collections module offers the following :term:`ABCs <abstract base class>`:
 
 .. tabularcolumns:: |l|L|L|L|
 
-=========================  =====================  ======================  ====================================================
+========================== ====================== ======================= ====================================================
 ABC                        Inherits from          Abstract Methods        Mixin Methods
-=========================  =====================  ======================  ====================================================
+========================== ====================== ======================= ====================================================
 :class:`Container`                                ``__contains__``
 :class:`Hashable`                                 ``__hash__``
 :class:`Iterable`                                 ``__iter__``
@@ -81,7 +81,11 @@ ABC                        Inherits from          Abstract Methods        Mixin 
 :class:`KeysView`          :class:`MappingView`,                          ``__contains__``,
                            :class:`Set`                                   ``__iter__``
 :class:`ValuesView`        :class:`MappingView`                           ``__contains__``, ``__iter__``
-=========================  =====================  ======================  ====================================================
+:class:`Awaitable`                                ``__await__``
+:class:`Coroutine`         :class:`Awaitable`     ``send``, ``throw``     ``close``
+:class:`AsyncIterable`                            ``__aiter__``
+:class:`AsyncIterator`     :class:`AsyncIterable` ``__anext__``           ``__aiter__``
+========================== ====================== ======================= ====================================================
 
 
 .. class:: Container
@@ -117,6 +121,20 @@ ABC                        Inherits from          Abstract Methods        Mixin 
 
    ABCs for read-only and mutable :term:`sequences <sequence>`.
 
+   Implementation note: Some of the mixin methods, such as
+   :meth:`__iter__`, :meth:`__reversed__` and :meth:`index`, make
+   repeated calls to the underlying :meth:`__getitem__` method.
+   Consequently, if :meth:`__getitem__` is implemented with constant
+   access speed, the mixin methods will have linear performance;
+   however, if the underlying method is linear (as it would be with a
+   linked list), the mixins will have quadratic performance and will
+   likely need to be overridden.
+
+   .. versionchanged:: 3.5
+      The index() method added support for *stop* and *start*
+      arguments.
+
+
 .. class:: Set
            MutableSet
 
@@ -133,6 +151,54 @@ ABC                        Inherits from          Abstract Methods        Mixin 
            ValuesView
 
    ABCs for mapping, items, keys, and values :term:`views <view>`.
+
+.. class:: Awaitable
+
+   ABC for :term:`awaitable` objects, which can be used in :keyword:`await`
+   expressions.  Custom implementations must provide the :meth:`__await__`
+   method.
+
+   :term:`Coroutine` objects and instances of the
+   :class:`~collections.abc.Coroutine` ABC are all instances of this ABC.
+
+   .. note::
+      In CPython, generator-based coroutines are *awaitables*, even though
+      they do not have an :meth:`__await__` method.  This ABC
+      implements an :meth:`~class.__instancecheck__` method to make them
+      instances of itself.
+
+   .. versionadded:: 3.5
+
+.. class:: Coroutine
+
+   ABC for coroutine compatible classes.  These implement the
+   following methods, defined in :ref:`coroutine-objects`:
+   :meth:`~coroutine.send`, :meth:`~coroutine.throw`, and
+   :meth:`~coroutine.close`.  Custom implementations must also implement
+   :meth:`__await__`.  All :class:`Coroutine` instances are also instances of
+   :class:`Awaitable`.  See also the definition of :term:`coroutine`.
+
+   .. note::
+      In CPython, generator-based coroutines are *awaitables* and *coroutines*,
+      even though they do not have an :meth:`__await__` method.  This ABC
+      implements an :meth:`~class.__instancecheck__` method to make them
+      instances of itself.
+
+   .. versionadded:: 3.5
+
+.. class:: AsyncIterable
+
+   ABC for classes that provide ``__aiter__`` method.  See also the
+   definition of :term:`asynchronous iterable`.
+
+   .. versionadded:: 3.5
+
+.. class:: AsyncIterator
+
+   ABC for classes that provide ``__aiter__`` and ``__anext__``
+   methods.  See also the definition of :term:`asynchronous iterator`.
+
+   .. versionadded:: 3.5
 
 
 These ABCs allow us to ask classes or instances if they provide

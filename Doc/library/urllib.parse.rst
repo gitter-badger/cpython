@@ -76,13 +76,15 @@ or on combining URL components into a URL string.
        ParseResult(scheme='', netloc='', path='help/Python.html', params='',
                   query='', fragment='')
 
-   If the *scheme* argument is specified, it gives the default addressing
-   scheme, to be used only if the URL does not specify one.  The default value for
-   this argument is the empty string.
+   The *scheme* argument gives the default addressing scheme, to be
+   used only if the URL does not specify one.  It should be the same type
+   (text or bytes) as *urlstring*, except that the default value ``''`` is
+   always allowed, and is automatically converted to ``b''`` if appropriate.
 
    If the *allow_fragments* argument is false, fragment identifiers are not
-   recognized and parsed as part of the preceding component.  The default value
-   for this argument is :const:`True`.
+   recognized.  Instead, they are parsed as part of the path, parameters
+   or query component, and :attr:`fragment` is set to the empty string in
+   the return value.
 
    The return value is actually an instance of a subclass of :class:`tuple`.  This
    class has the following additional read-only convenience attributes:
@@ -90,7 +92,7 @@ or on combining URL components into a URL string.
    +------------------+-------+--------------------------+----------------------+
    | Attribute        | Index | Value                    | Value if not present |
    +==================+=======+==========================+======================+
-   | :attr:`scheme`   | 0     | URL scheme specifier     | empty string         |
+   | :attr:`scheme`   | 0     | URL scheme specifier     | *scheme* parameter   |
    +------------------+-------+--------------------------+----------------------+
    | :attr:`netloc`   | 1     | Network location part    | empty string         |
    +------------------+-------+--------------------------+----------------------+
@@ -206,7 +208,7 @@ or on combining URL components into a URL string.
    +------------------+-------+-------------------------+----------------------+
    | Attribute        | Index | Value                   | Value if not present |
    +==================+=======+=========================+======================+
-   | :attr:`scheme`   | 0     | URL scheme specifier    | empty string         |
+   | :attr:`scheme`   | 0     | URL scheme specifier    | *scheme* parameter   |
    +------------------+-------+-------------------------+----------------------+
    | :attr:`netloc`   | 1     | Network location part   | empty string         |
    +------------------+-------+-------------------------+----------------------+
@@ -519,7 +521,8 @@ task isn't already covered by the URL parsing functions above.
    Example: ``unquote_to_bytes('a%26%EF')`` yields ``b'a&\xef'``.
 
 
-.. function:: urlencode(query, doseq=False, safe='', encoding=None, errors=None)
+.. function:: urlencode(query, doseq=False, safe='', encoding=None, \
+                        errors=None, quote_via=quote_plus)
 
    Convert a mapping object or a sequence of two-element tuples, which may
    contain :class:`str` or :class:`bytes` objects, to a "percent-encoded"
@@ -528,8 +531,16 @@ task isn't already covered by the URL parsing functions above.
    properly encoded to bytes, otherwise it would result in a :exc:`TypeError`.
 
    The resulting string is a series of ``key=value`` pairs separated by ``'&'``
-   characters, where both *key* and *value* are quoted using :func:`quote_plus`
-   above. When a sequence of two-element tuples is used as the *query*
+   characters, where both *key* and *value* are quoted using the *quote_via*
+   function.  By default, :func:`quote_plus` is used to quote the values, which
+   means spaces are quoted as a ``'+'`` character and '/' characters are
+   encoded as ``%2F``, which follows the standard for GET requests
+   (``application/x-www-form-urlencoded``).  An alternate function that can be
+   passed as *quote_via* is :func:`quote`, which will encode spaces as ``%20``
+   and not encode '/' characters.  For maximum control of what is quoted, use
+   ``quote`` and specify a value for *safe*.
+
+   When a sequence of two-element tuples is used as the *query*
    argument, the first element of each tuple is a key and the second is a
    value. The value element in itself can be a sequence and in that case, if
    the optional parameter *doseq* is evaluates to *True*, individual
@@ -538,7 +549,7 @@ task isn't already covered by the URL parsing functions above.
    string will match the order of parameter tuples in the sequence.
 
    The *safe*, *encoding*, and *errors* parameters are passed down to
-   :func:`quote_plus` (the *encoding* and *errors* parameters are only passed
+   *quote_via* (the *encoding* and *errors* parameters are only passed
    when a query element is a :class:`str`).
 
    To reverse this encoding process, :func:`parse_qs` and :func:`parse_qsl` are
@@ -549,6 +560,9 @@ task isn't already covered by the URL parsing functions above.
 
    .. versionchanged:: 3.2
       Query parameter supports bytes and string objects.
+
+   .. versionadded:: 3.5
+      *quote_via* parameter.
 
 
 .. seealso::

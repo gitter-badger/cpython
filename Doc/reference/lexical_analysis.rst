@@ -311,7 +311,7 @@ The Unicode category codes mentioned above stand for:
 * *Nd* - decimal numbers
 * *Pc* - connector punctuations
 * *Other_ID_Start* - explicit list of characters in `PropList.txt
-  <http://www.unicode.org/Public/7.0.0/ucd/PropList.txt>`_ to support backwards
+  <http://www.unicode.org/Public/8.0.0/ucd/PropList.txt>`_ to support backwards
   compatibility
 * *Other_ID_Continue* - likewise
 
@@ -632,8 +632,7 @@ for disambiguation with C-style octal literals, which Python used before version
 Some examples of integer literals::
 
    7     2147483647                        0o177    0b100110111
-   3     79228162514264337593543950336     0o377    0x100000000
-         79228162514264337593543950336              0xdeadbeef
+   3     79228162514264337593543950336     0o377    0xdeadbeef
 
 
 .. _floating:
@@ -728,4 +727,4 @@ occurrence outside string literals and comments is an unconditional error::
 
 .. rubric:: Footnotes
 
-.. [#] http://www.unicode.org/Public/7.0.0/ucd/NameAliases.txt
+.. [#] http://www.unicode.org/Public/8.0.0/ucd/NameAliases.txt

@@ -1796,6 +1796,18 @@ raise_exception(PyObject *self, PyObject *args)
 }
 
 static PyObject *
+set_errno(PyObject *self, PyObject *args)
+{
+    int new_errno;
+
+    if (!PyArg_ParseTuple(args, "i:set_errno", &new_errno))
+        return NULL;
+
+    errno = new_errno;
+    Py_RETURN_NONE;
+}
+
+static PyObject *
 test_set_exc_info(PyObject *self, PyObject *args)
 {
     PyObject *orig_exc;
@@ -3510,6 +3522,7 @@ test_PyTime_AsMicroseconds(PyObject *self, PyObject *args)
 static PyMethodDef TestMethods[] = {
     {"raise_exception",         raise_exception,                 METH_VARARGS},
     {"raise_memoryerror",   (PyCFunction)raise_memoryerror,  METH_NOARGS},
+    {"set_errno",               set_errno,                       METH_VARARGS},
     {"test_config",             (PyCFunction)test_config,        METH_NOARGS},
     {"test_sizeof_c_types",     (PyCFunction)test_sizeof_c_types, METH_NOARGS},
     {"test_datetime_capi",  test_datetime_capi,              METH_NOARGS},
@@ -3987,7 +4000,7 @@ awaitObject_await(awaitObject *ao)
 }
 
 static PyAsyncMethods awaitType_as_async = {
-    (getawaitablefunc)awaitObject_await,    /* am_await */
+    (unaryfunc)awaitObject_await,           /* am_await */
     0,                                      /* am_aiter */
     0                                       /* am_anext */
 };
@@ -4047,6 +4060,9 @@ static struct PyModuleDef _testcapimodule = {
     NULL,
     NULL
 };
+
+/* Per PEP 489, this module will not be converted to multi-phase initialization
+ */
 
 PyMODINIT_FUNC
 PyInit__testcapi(void)

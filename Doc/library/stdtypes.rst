@@ -354,7 +354,7 @@ Notes:
    The numeric literals accepted include the digits ``0`` to ``9`` or any
    Unicode equivalent (code points with the ``Nd`` property).
 
-   See http://www.unicode.org/Public/7.0.0/ucd/extracted/DerivedNumericType.txt
+   See http://www.unicode.org/Public/8.0.0/ucd/extracted/DerivedNumericType.txt
    for a complete list of code points with the ``Nd`` property.
 
 
@@ -1937,6 +1937,16 @@ expression support in the :mod:`re` module).
       >>> 'www.example.com'.strip('cmowz.')
       'example'
 
+   The outermost leading and trailing *chars* argument values are stripped
+   from the string. Characters are removed from the leading end until
+   reaching a string character that is not contained in the set of
+   characters in *chars*. A similar action takes place on the trailing end.
+   For example::
+
+      >>> comment_string = '#....... Section 3.2.1 Issue #32 .......'
+      >>> comment_string.strip('.#! ')
+      'Section 3.2.1 Issue #32'
+
 
 .. method:: str.swapcase()
 
@@ -2509,7 +2519,7 @@ arbitrary binary data.
    Return a bytes or bytearray object which is the concatenation of the
    binary data sequences in the :term:`iterable` *iterable*.  A
    :exc:`TypeError` will be raised if there are any values in *iterable*
-   that are note :term:`bytes-like objects <bytes-like object>`, including
+   that are not :term:`bytes-like objects <bytes-like object>`, including
    :class:`str` objects.  The separator between elements is the contents
    of the bytes or bytearray object providing this method.
 
@@ -4144,6 +4154,10 @@ pairs within braces, for example: ``{'jack': 4098, 'sjoerd': 4127}`` or ``{4098:
 
       Return a new view of the dictionary's values.  See the
       :ref:`documentation of view objects <dict-views>`.
+
+   Dictionaries compare equal if and only if they have the same ``(key,
+   value)`` pairs. Order comparisons ('<', '<=', '>=', '>') raise
+   :exc:`TypeError`.
 
 .. seealso::
    :class:`types.MappingProxyType` can be used to create a read-only view

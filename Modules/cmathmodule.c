@@ -986,9 +986,10 @@ cmath_polar_impl(PyModuleDef *module, Py_complex z)
 {
     double r, phi;
 
+    errno = 0;
     PyFPE_START_PROTECT("polar function", return 0)
     phi = c_atan2(z); /* should not cause any exception */
-    r = _Py_c_abs(z); /* sets errno to ERANGE on overflow;  otherwise 0 */
+    r = _Py_c_abs(z); /* sets errno to ERANGE on overflow */
     PyFPE_END_PROTECT(r)
     if (errno != 0)
         return math_error();
@@ -1114,6 +1115,73 @@ cmath_isinf_impl(PyModuleDef *module, Py_complex z)
                            Py_IS_INFINITY(z.imag));
 }
 
+/*[clinic input]
+cmath.isclose -> bool
+
+    a: Py_complex
+    b: Py_complex
+    *
+    rel_tol: double = 1e-09
+        maximum difference for being considered "close", relative to the
+        magnitude of the input values
+    abs_tol: double = 0.0
+        maximum difference for being considered "close", regardless of the
+        magnitude of the input values
+
+Determine whether two complex numbers are close in value.
+
+Return True if a is close in value to b, and False otherwise.
+
+For the values to be considered close, the difference between them must be
+smaller than at least one of the tolerances.
+
+-inf, inf and NaN behave similarly to the IEEE 754 Standard. That is, NaN is
+not close to anything, even itself. inf and -inf are only close to themselves.
+[clinic start generated code]*/
+
+static int
+cmath_isclose_impl(PyModuleDef *module, Py_complex a, Py_complex b,
+                   double rel_tol, double abs_tol)
+/*[clinic end generated code: output=da0c535fb54e2310 input=df9636d7de1d4ac3]*/
+{
+    double diff;
+
+    /* sanity check on the inputs */
+    if (rel_tol < 0.0 || abs_tol < 0.0 ) {
+        PyErr_SetString(PyExc_ValueError,
+                        "tolerances must be non-negative");
+        return -1;
+    }
+
+    if ( (a.real == b.real) && (a.imag == b.imag) ) {
+        /* short circuit exact equality -- needed to catch two infinities of
+           the same sign. And perhaps speeds things up a bit sometimes.
+        */
+        return 1;
+    }
+
+    /* This catches the case of two infinities of opposite sign, or
+       one infinity and one finite number. Two infinities of opposite
+       sign would otherwise have an infinite relative tolerance.
+       Two infinities of the same sign are caught by the equality check
+       above.
+    */
+
+    if (Py_IS_INFINITY(a.real) || Py_IS_INFINITY(a.imag) ||
+        Py_IS_INFINITY(b.real) || Py_IS_INFINITY(b.imag)) {
+        return 0;
+    }
+
+    /* now do the regular computation
+       this is essentially the "weak" test from the Boost library
+    */
+
+    diff = _Py_c_abs(_Py_c_diff(a, b));
+
+    return (((diff <= rel_tol * _Py_c_abs(b)) ||
+             (diff <= rel_tol * _Py_c_abs(a))) ||
+            (diff <= abs_tol));
+}
 
 PyDoc_STRVAR(module_doc,
 "This module is always available. It provides access to mathematical\n"
@@ -1129,6 +1197,7 @@ static PyMethodDef cmath_methods[] = {
     CMATH_COS_METHODDEF
     CMATH_COSH_METHODDEF
     CMATH_EXP_METHODDEF
+    CMATH_ISCLOSE_METHODDEF
     CMATH_ISFINITE_METHODDEF
     CMATH_ISINF_METHODDEF
     CMATH_ISNAN_METHODDEF

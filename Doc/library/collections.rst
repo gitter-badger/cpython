@@ -333,7 +333,7 @@ counts, but the output will exclude results with counts of zero or less.
     >>> c | d                       # union:  max(c[x], d[x])
     Counter({'a': 3, 'b': 2})
 
-Unary addition and substraction are shortcuts for adding an empty counter
+Unary addition and subtraction are shortcuts for adding an empty counter
 or subtracting from an empty counter.
 
     >>> c = Counter(a=2, b=-4)
@@ -387,7 +387,7 @@ or subtracting from an empty counter.
       Section 4.6.3, Exercise 19*.
 
     * To enumerate all distinct multisets of a given size over a given set of
-      elements, see :func:`itertools.combinations_with_replacement`.
+      elements, see :func:`itertools.combinations_with_replacement`:
 
             map(Counter, combinations_with_replacement('ABC', 2)) --> AA AB AC BB BC CC
 
@@ -464,10 +464,11 @@ or subtracting from an empty counter.
         elements in the iterable argument.
 
 
-    .. method:: index(x[, start[, end]])
+    .. method:: index(x[, start[, stop]])
 
-        Return the position of *x* in the deque.  Returns the first match
-        or raises :exc:`ValueError` if not found.
+        Return the position of *x* in the deque (at or after index *start*
+        and before index *stop*).  Returns the first match or raises
+        :exc:`ValueError` if not found.
 
         .. versionadded:: 3.5
 
@@ -493,7 +494,7 @@ or subtracting from an empty counter.
 
     .. method:: remove(value)
 
-        Removed the first occurrence of *value*.  If not found, raises a
+        Remove the first occurrence of *value*.  If not found, raises a
         :exc:`ValueError`.
 
 

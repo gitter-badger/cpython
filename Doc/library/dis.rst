@@ -346,6 +346,14 @@ result back on the stack.
    Implements ``TOS = iter(TOS)``.
 
 
+.. opcode:: GET_YIELD_FROM_ITER
+
+   If ``TOS`` is a :term:`generator iterator` or :term:`coroutine` object
+   it is left as is.  Otherwise, implements ``TOS = iter(TOS)``.
+
+   .. versionadded:: 3.5
+
+
 **Binary operations**
 
 Binary operations remove the top of the stack (TOS) and the second top-most
@@ -508,12 +516,14 @@ the original TOS1.
    Implements ``del TOS1[TOS]``.
 
 
-**Coroutines opcodes**
+**Coroutine opcodes**
 
 .. opcode:: GET_AWAITABLE
 
-   Implements ``TOS = get_awaitable(TOS)``; where ``get_awaitable(o)``
-   returns ``o`` if ``o`` is a coroutine object; or resolved ``o.__await__``.
+   Implements ``TOS = get_awaitable(TOS)``, where ``get_awaitable(o)``
+   returns ``o`` if ``o`` is a coroutine object or a generator object with
+   the CO_ITERABLE_COROUTINE flag, or resolves
+   ``o.__await__``.
 
 
 .. opcode:: GET_AITER
@@ -848,10 +858,6 @@ the more significant byte last.
    Pushes a try block from a try-except clause onto the block stack. *delta*
    points to the finally block.
 
-.. opcode:: STORE_MAP
-
-   Store a key and value pair in a dictionary.  Pops the key and value while
-   leaving the dictionary on the stack.
 
 .. opcode:: LOAD_FAST (var_num)
 

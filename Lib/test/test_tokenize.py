@@ -5,6 +5,8 @@ The tests can be really simple. Given a small fragment of source
 code, print out a table with tokens. The ENDMARKER is omitted for
 brevity.
 
+    >>> import glob
+
     >>> dump_tokens("1 + 1")
     ENCODING   'utf-8'       (0, 0) (0, 0)
     NUMBER     '1'           (1, 0) (1, 1)
@@ -834,8 +836,8 @@ from tokenize import (tokenize, _tokenize, untokenize, NUMBER, NAME, OP,
                      STRING, ENDMARKER, ENCODING, tok_name, detect_encoding,
                      open as tokenize_open, Untokenizer)
 from io import BytesIO
-from unittest import TestCase
-import os, sys, glob
+from unittest import TestCase, mock
+import os
 import token
 
 def dump_tokens(s):
@@ -1246,6 +1248,14 @@ class TestDetectEncoding(TestCase):
             ins = Bunk(lines, path)
             detect_encoding(ins.readline)
 
+    def test_open_error(self):
+        # Issue #23840: open() must close the binary file on error
+        m = BytesIO(b'#coding:xxx')
+        with mock.patch('tokenize._builtin_open', return_value=m):
+            self.assertRaises(SyntaxError, tokenize_open, 'foobar')
+        self.assertTrue(m.closed)
+
+
 
 class TestTokenize(TestCase):
 
@@ -1288,6 +1298,17 @@ class TestTokenize(TestCase):
             tokenize_module._tokenize = orig__tokenize
 
         self.assertTrue(encoding_used, encoding)
+
+    def test_oneline_defs(self):
+        buf = []
+        for i in range(500):
+            buf.append('def i{i}(): return {i}'.format(i=i))
+        buf.append('OK')
+        buf = '\n'.join(buf)
+
+        # Test that 500 consequent, one-line defs is OK
+        toks = list(tokenize(BytesIO(buf.encode('utf-8')).readline))
+        self.assertEqual(toks[-2].string, 'OK') # [-1] is always ENDMARKER
 
     def assertExactTypeEqual(self, opstr, *optypes):
         tokens = list(tokenize(BytesIO(opstr.encode('utf-8')).readline))
@@ -1408,6 +1429,22 @@ class UntokenizeTest(TestCase):
         self.assertEqual(untokenize(iter(tokens)), b'Hello ')
 
 
+class TestRoundtrip(TestCase):
+    def roundtrip(self, code):
+        if isinstance(code, str):
+            code = code.encode('utf-8')
+        return untokenize(tokenize(BytesIO(code).readline)).decode('utf-8')
+
+    def test_indentation_semantics_retained(self):
+        """
+        Ensure that although whitespace might be mutated in a roundtrip,
+        the semantic meaning of the indentation remains consistent.
+        """
+        code = "if False:\n\tx=3\n\tx=3\n"
+        codelines = self.roundtrip(code).split('\n')
+        self.assertEqual(codelines[1], codelines[2])
+
+
 __test__ = {"doctests" : doctests, 'decistmt': decistmt}
 
 def test_main():
@@ -1418,6 +1455,7 @@ def test_main():
     support.run_unittest(TestDetectEncoding)
     support.run_unittest(TestTokenize)
     support.run_unittest(UntokenizeTest)
+    support.run_unittest(TestRoundtrip)
 
 if __name__ == "__main__":
     test_main()

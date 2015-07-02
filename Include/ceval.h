@@ -23,8 +23,8 @@ PyAPI_FUNC(PyObject *) PyEval_CallMethod(PyObject *obj,
 #ifndef Py_LIMITED_API
 PyAPI_FUNC(void) PyEval_SetProfile(Py_tracefunc, PyObject *);
 PyAPI_FUNC(void) PyEval_SetTrace(Py_tracefunc, PyObject *);
-PyAPI_FUNC(void) PyEval_SetCoroutineWrapper(PyObject *wrapper);
-PyAPI_FUNC(PyObject *) PyEval_GetCoroutineWrapper(void);
+PyAPI_FUNC(void) _PyEval_SetCoroutineWrapper(PyObject *);
+PyAPI_FUNC(PyObject *) _PyEval_GetCoroutineWrapper(void);
 #endif
 
 struct _frame; /* Avoid including frameobject.h */
@@ -79,7 +79,7 @@ PyAPI_FUNC(int) Py_GetRecursionLimit(void);
     do{ if(_Py_MakeEndRecCheck(PyThreadState_GET()->recursion_depth))  \
       PyThreadState_GET()->overflowed = 0;  \
     } while(0)
-PyAPI_FUNC(int) _Py_CheckRecursiveCall(char *where);
+PyAPI_FUNC(int) _Py_CheckRecursiveCall(const char *where);
 PyAPI_DATA(int) _Py_CheckRecursionLimit;
 
 #ifdef USE_STACKCHECK

@@ -903,8 +903,6 @@ PyCompile_OpcodeStackEffect(int opcode, int oparg)
             return -1;
         case STORE_SUBSCR:
             return -3;
-        case STORE_MAP:
-            return -2;
         case DELETE_SUBSCR:
             return -2;
 
@@ -1066,6 +1064,8 @@ PyCompile_OpcodeStackEffect(int opcode, int oparg)
             return 0;
         case GET_ANEXT:
             return 1;
+        case GET_YIELD_FROM_ITER:
+            return 0;
         default:
             return PY_INVALID_STACK_EFFECT;
     }
@@ -1753,12 +1753,8 @@ compiler_function(struct compiler *c, stmt_ty s, int is_async)
     Py_DECREF(qualname);
     Py_DECREF(co);
 
-    if (is_async) {
+    if (is_async)
         co->co_flags |= CO_COROUTINE;
-        /* An async function is always a generator, even
-           if there is no 'yield' expressions in it. */
-        co->co_flags |= CO_GENERATOR;
-    }
 
     /* decorators */
     for (i = 0; i < asdl_seq_LEN(decos); i++) {
@@ -3138,8 +3134,8 @@ compiler_dict(struct compiler *c, expr_ty e)
             containers++;
         }
         else {
-            VISIT(c, expr, (expr_ty)asdl_seq_GET(e->v.Dict.values, i));
             VISIT(c, expr, (expr_ty)asdl_seq_GET(e->v.Dict.keys, i));
+            VISIT(c, expr, (expr_ty)asdl_seq_GET(e->v.Dict.values, i));
             elements++;
         }
     }
@@ -3287,8 +3283,8 @@ compiler_call_helper(struct compiler *c,
         }
         else if (nsubkwargs) {
             /* A keyword argument and we already have a dict. */
-            VISIT(c, expr, kw->value);
             ADDOP_O(c, LOAD_CONST, kw->arg, consts);
+            VISIT(c, expr, kw->value);
             nseen++;
         }
         else {
@@ -3632,9 +3628,9 @@ expr_constant(struct compiler *c, expr_ty e)
        BLOCK
    finally:
        if an exception was raised:
-       exc = copy of (exception, instance, traceback)
+           exc = copy of (exception, instance, traceback)
        else:
-       exc = (None, None, None)
+           exc = (None, None, None)
        if not (await exit(*exc)):
            raise
  */
@@ -3727,9 +3723,9 @@ compiler_async_with(struct compiler *c, stmt_ty s, int pos)
        BLOCK
    finally:
        if an exception was raised:
-       exc = copy of (exception, instance, traceback)
+           exc = copy of (exception, instance, traceback)
        else:
-       exc = (None, None, None)
+           exc = (None, None, None)
        exit(*exc)
  */
 static int
@@ -3852,7 +3848,7 @@ compiler_visit_expr(struct compiler *c, expr_ty e)
             return compiler_error(c, "'yield from' inside async function");
 
         VISIT(c, expr, e->v.YieldFrom.value);
-        ADDOP(c, GET_ITER);
+        ADDOP(c, GET_YIELD_FROM_ITER);
         ADDOP_O(c, LOAD_CONST, Py_None, consts);
         ADDOP(c, YIELD_FROM);
         break;
@@ -3860,7 +3856,10 @@ compiler_visit_expr(struct compiler *c, expr_ty e)
         if (c->u->u_ste->ste_type != FunctionBlock)
             return compiler_error(c, "'await' outside function");
 
-        /* this check won't be triggered while we have AWAIT token */
+        if (c->u->u_scope_type == COMPILER_SCOPE_COMPREHENSION)
+            return compiler_error(
+                c, "'await' expressions in comprehensions are not supported");
+
         if (c->u->u_scope_type != COMPILER_SCOPE_ASYNC_FUNCTION)
             return compiler_error(c, "'await' outside async function");
 

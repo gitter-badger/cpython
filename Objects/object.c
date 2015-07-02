@@ -1607,6 +1607,21 @@ _Py_ReadyTypes(void)
     if (PyType_Ready(&PyDict_Type) < 0)
         Py_FatalError("Can't initialize dict type");
 
+    if (PyType_Ready(&PyODict_Type) < 0)
+        Py_FatalError("Can't initialize OrderedDict type");
+
+    if (PyType_Ready(&PyODictKeys_Type) < 0)
+        Py_FatalError("Can't initialize odict_keys type");
+
+    if (PyType_Ready(&PyODictItems_Type) < 0)
+        Py_FatalError("Can't initialize odict_items type");
+
+    if (PyType_Ready(&PyODictValues_Type) < 0)
+        Py_FatalError("Can't initialize odict_values type");
+
+    if (PyType_Ready(&PyODictIter_Type) < 0)
+        Py_FatalError("Can't initialize odict_keyiterator type");
+
     if (PyType_Ready(&PySet_Type) < 0)
         Py_FatalError("Can't initialize set type");
 
@@ -1711,6 +1726,12 @@ _Py_ReadyTypes(void)
 
     if (PyType_Ready(&PySeqIter_Type) < 0)
         Py_FatalError("Can't initialize sequence iterator type");
+
+    if (PyType_Ready(&PyCoro_Type) < 0)
+        Py_FatalError("Can't initialize coroutine type");
+
+    if (PyType_Ready(&_PyCoroWrapper_Type) < 0)
+        Py_FatalError("Can't initialize coroutine wrapper type");
 }
 
 

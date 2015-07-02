@@ -3530,6 +3530,7 @@ PyUnicode_DecodeLocaleAndSize(const char *str, Py_ssize_t len,
     return unicode;
 
 decode_error:
+    reason = NULL;
     errmsg = strerror(errno);
     assert(errmsg != NULL);
 
@@ -3540,10 +3541,9 @@ decode_error:
         if (wstr != NULL) {
             reason = PyUnicode_FromWideChar(wstr, errlen);
             PyMem_RawFree(wstr);
-        } else
-            errmsg = NULL;
+        }
     }
-    if (errmsg == NULL)
+    if (reason == NULL)
         reason = PyUnicode_FromString(
             "mbstowcs() encountered an invalid multibyte sequence");
     if (reason == NULL)
@@ -9280,13 +9280,13 @@ tailmatch(PyObject *self,
         PyUnicode_READY(substring) == -1)
         return -1;
 
-    if (PyUnicode_GET_LENGTH(substring) == 0)
-        return 1;
-
     ADJUST_INDICES(start, end, PyUnicode_GET_LENGTH(self));
     end -= PyUnicode_GET_LENGTH(substring);
     if (end < start)
         return 0;
+
+    if (PyUnicode_GET_LENGTH(substring) == 0)
+        return 1;
 
     kind_self = PyUnicode_KIND(self);
     data_self = PyUnicode_DATA(self);

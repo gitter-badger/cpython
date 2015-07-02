@@ -52,6 +52,12 @@ dict_items = type({}.items())
 ## misc ##
 mappingproxy = type(type.__dict__)
 generator = type((lambda: (yield))())
+## coroutine ##
+async def _coro(): pass
+_coro = _coro()
+coroutine = type(_coro)
+_coro.close()  # Prevent ResourceWarning
+del _coro
 
 
 ### ONE-TRICK PONIES ###
@@ -75,24 +81,41 @@ class Hashable(metaclass=ABCMeta):
         return NotImplemented
 
 
-class _CoroutineMeta(ABCMeta):
+class _AwaitableMeta(ABCMeta):
 
     def __instancecheck__(cls, instance):
-        # 0x80 = CO_COROUTINE
-        # 0x100 = CO_ITERABLE_COROUTINE
-        # We don't want to import 'inspect' module, as
-        # a dependency for 'collections.abc'.
-        CO_COROUTINES = 0x80 | 0x100
-
-        if (isinstance(instance, generator) and
-            instance.gi_code.co_flags & CO_COROUTINES):
-
+        # This hook is needed because we can't add
+        # '__await__' method to generator objects, and
+        # we can't register GeneratorType on Awaitable.
+        # NB: 0x100 = CO_ITERABLE_COROUTINE
+        # (We don't want to import 'inspect' module, as
+        # a dependency for 'collections.abc')
+        if (instance.__class__ is generator and
+            instance.gi_code.co_flags & 0x100):
             return True
-
         return super().__instancecheck__(instance)
 
 
-class Coroutine(metaclass=_CoroutineMeta):
+class Awaitable(metaclass=_AwaitableMeta):
+
+    __slots__ = ()
+
+    @abstractmethod
+    def __await__(self):
+        yield
+
+    @classmethod
+    def __subclasshook__(cls, C):
+        if cls is Awaitable:
+            for B in C.__mro__:
+                if "__await__" in B.__dict__:
+                    if B.__dict__["__await__"]:
+                        return True
+                    break
+        return NotImplemented
+
+
+class Coroutine(Awaitable):
 
     __slots__ = ()
 
@@ -126,26 +149,21 @@ class Coroutine(metaclass=_CoroutineMeta):
         else:
             raise RuntimeError("coroutine ignored GeneratorExit")
 
-
-class Awaitable(metaclass=_CoroutineMeta):
-
-    __slots__ = ()
-
-    @abstractmethod
-    def __await__(self):
-        yield
-
     @classmethod
     def __subclasshook__(cls, C):
-        if cls is Awaitable:
-            for B in C.__mro__:
-                if "__await__" in B.__dict__:
-                    if B.__dict__["__await__"]:
-                        return True
-                    break
+        if cls is Coroutine:
+            mro = C.__mro__
+            for method in ('__await__', 'send', 'throw', 'close'):
+                for base in mro:
+                    if method in base.__dict__:
+                        break
+                else:
+                    return NotImplemented
+            return True
         return NotImplemented
 
-Awaitable.register(Coroutine)
+
+Coroutine.register(coroutine)
 
 
 class AsyncIterable(metaclass=ABCMeta):
@@ -825,13 +843,23 @@ class Sequence(Sized, Iterable, Container):
         for i in reversed(range(len(self))):
             yield self[i]
 
-    def index(self, value):
-        '''S.index(value) -> integer -- return first index of value.
+    def index(self, value, start=0, stop=None):
+        '''S.index(value, [start, [stop]]) -> integer -- return first index of value.
            Raises ValueError if the value is not present.
         '''
-        for i, v in enumerate(self):
-            if v == value:
-                return i
+        if start is not None and start < 0:
+            start = max(len(self) + start, 0)
+        if stop is not None and stop < 0:
+            stop += len(self)
+
+        i = start
+        while stop is None or i < stop:
+            try:
+                if self[i] == value:
+                    return i
+            except IndexError:
+                break
+            i += 1
         raise ValueError
 
     def count(self, value):

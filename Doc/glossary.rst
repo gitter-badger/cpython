@@ -69,10 +69,33 @@ Glossary
       :ref:`the difference between arguments and parameters
       <faq-argument-vs-parameter>`, and :pep:`362`.
 
+   asynchronous context manager
+      An object which controls the environment seen in an
+      :keyword:`async with` statement by defining :meth:`__aenter__` and
+      :meth:`__aexit__` methods.  Introduced by :pep:`492`.
+
+   asynchronous iterable
+      An object, that can be used in an :keyword:`async for` statement.
+      Must return an :term:`awaitable` from its :meth:`__aiter__` method,
+      which should in turn be resolved in an :term:`asynchronous iterator`
+      object.  Introduced by :pep:`492`.
+
+   asynchronous iterator
+      An object that implements :meth:`__aiter__` and :meth:`__anext__`
+      methods, that must return :term:`awaitable` objects.
+      :keyword:`async for` resolves awaitable returned from asynchronous
+      iterator's :meth:`__anext__` method until it raises
+      :exc:`StopAsyncIteration` exception.  Introduced by :pep:`492`.
+
    attribute
       A value associated with an object which is referenced by name using
       dotted expressions.  For example, if an object *o* has an attribute
       *a* it would be referenced as *o.a*.
+
+   awaitable
+      An object that can be used in an :keyword:`await` expression.  Can be
+      a :term:`coroutine` or an object with an :meth:`__await__` method.
+      See also :pep:`492`.
 
    BDFL
       Benevolent Dictator For Life, a.k.a. `Guido van Rossum
@@ -145,6 +168,20 @@ Glossary
       An object which controls the environment seen in a :keyword:`with`
       statement by defining :meth:`__enter__` and :meth:`__exit__` methods.
       See :pep:`343`.
+
+   coroutine
+      Coroutines is a more generalized form of subroutines. Subroutines are
+      entered at one point and exited at another point.  Coroutines can be
+      entered, exited, and resumed at many different points.  They can be
+      implemented with the :keyword:`async def` statement.  See also
+      :pep:`492`.
+
+   coroutine function
+      A function which returns a :term:`coroutine` object.  A coroutine
+      function may be defined with the :keyword:`async def` statement,
+      and may contain :keyword:`await`, :keyword:`async for`, and
+      :keyword:`async with` keywords.  These were introduced
+      by :pep:`492`.
 
    CPython
       The canonical implementation of the Python programming language, as
@@ -297,14 +334,23 @@ Glossary
       .. index:: single: generator
 
    generator
-      A function which returns an iterator.  It looks like a normal function
-      except that it contains :keyword:`yield` statements for producing a series
-      of values usable in a for-loop or that can be retrieved one at a time with
-      the :func:`next` function. Each :keyword:`yield` temporarily suspends
-      processing, remembering the location execution state (including local
-      variables and pending try-statements).  When the generator resumes, it
-      picks-up where it left-off (in contrast to functions which start fresh on
-      every invocation).
+      A function which returns a :term:`generator iterator`.  It looks like a
+      normal function except that it contains :keyword:`yield` expressions
+      for producing a series of values usable in a for-loop or that can be
+      retrieved one at a time with the :func:`next` function.
+
+      Usually refers to a generator function, but may refer to a
+      *generator iterator* in some contexts.  In cases where the intended
+      meaning isn't clear, using the full terms avoids ambiguity.
+
+   generator iterator
+      An object created by a :term:`generator` function.
+
+      Each :keyword:`yield` temporarily suspends processing, remembering the
+      location execution state (including local variables and pending
+      try-statements).  When the *generator iterator* resumes, it picks-up where
+      it left-off (in contrast to functions which start fresh on every
+      invocation).
 
       .. index:: single: generator expression
 
